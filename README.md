@@ -88,8 +88,9 @@ edit. Each team is one `team(...)` block; each player is a compact tuple:
   `ranking` (lower = stronger baseline).
 
 To replace a squad, just paste new tuples. To move a team to a different group,
-change its `group` field (and the array it lives in). Aim for ~15 players per team
-with at least one GK and enough outfielders to fill any formation.
+change its `group` field (and the array it lives in). Each team carries the real
+World Cup squad size of **26 players** (≥2 GK, ≥6 DEF, ≥5 MID, ≥4 FWD), which gives
+deep benches for the 5-substitution halftime feature.
 
 > ✅ The groups in this file are the **real, official 2026 FIFA World Cup final
 > draw** (all 48 qualified nations in their actual groups A–L; Italy did not
