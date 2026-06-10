@@ -1,16 +1,29 @@
 import { getTeam, GROUPS, teamsByGroup } from '../data/teams'
 import type { BracketSlot, GroupTable, KnockoutRoundName, MatchResult, Tactics } from '../types'
 import { slotById, slotsForRound } from './bracket'
-import { aiSide, simulateMatch, userSide, winnerOf } from './sim'
+import { aiSide, type SimSide, simulateMatch, userSide, winnerOf } from './sim'
 import { computeTable, groupFixtures } from './standings'
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Orchestration layer — wires the data, sim, standings and bracket together.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function sideFor(teamId: string, userTeamId: string, tactics: Tactics) {
+function sideFor(teamId: string, userTeamId: string, tactics: Tactics): SimSide {
   const team = getTeam(teamId)!
   return teamId === userTeamId ? userSide(team, tactics) : aiSide(team)
+}
+
+// Build both SimSides for a fixture (used by the live, half-by-half match flow).
+export function buildSides(
+  homeId: string,
+  awayId: string,
+  userTeamId: string,
+  tactics: Tactics,
+): { home: SimSide; away: SimSide } {
+  return {
+    home: sideFor(homeId, userTeamId, tactics),
+    away: sideFor(awayId, userTeamId, tactics),
+  }
 }
 
 // Simulate a single group match between two team ids.
@@ -139,4 +152,59 @@ export function userSlotInRound(
   return slotsForRound(bracket, round).find(
     (s) => s.home === userTeamId || s.away === userTeamId,
   )
+}
+
+// Apply a user's (already-simulated, live) knockout result to the bracket, then
+// simulate every OTHER match in the round and propagate all winners forward.
+export function resolveRoundWithUserResult(
+  bracket: BracketSlot[],
+  round: KnockoutRoundName,
+  userTeamId: string,
+  userResult: MatchResult,
+): RoundOutcome {
+  const next = bracket.map((s) => ({ ...s }))
+  const roundSlots = slotsForRound(next, round)
+
+  for (const slot of roundSlots) {
+    if (!slot.home || !slot.away) continue
+    const involvesUser = slot.home === userTeamId || slot.away === userTeamId
+    if (involvesUser) {
+      slot.result = userResult
+      slot.winner = winnerOf(userResult)
+    } else {
+      const home = aiSide(getTeam(slot.home)!)
+      const away = aiSide(getTeam(slot.away)!)
+      const result = simulateMatch(home, away, { stage: round, knockout: true })
+      slot.result = result
+      slot.winner = winnerOf(result)
+    }
+    propagateWinner(next, slot)
+  }
+
+  const userWon = winnerOf(userResult) === userTeamId
+  return { bracket: next, userResult, userWon, isFinal: round === 'Final' }
+}
+
+// ── Golden Boot (top scorers across the whole tournament) ────────────────────
+
+export interface ScorerTally {
+  name: string
+  teamId: string
+  goals: number
+}
+
+export function topScorers(results: MatchResult[], limit = 10): ScorerTally[] {
+  const tally = new Map<string, ScorerTally>()
+  for (const r of results) {
+    for (const e of r.events) {
+      if (e.kind && e.kind !== 'goal') continue
+      const key = `${e.scorer}@${e.team}`
+      const existing = tally.get(key)
+      if (existing) existing.goals++
+      else tally.set(key, { name: e.scorer, teamId: e.team, goals: 1 })
+    }
+  }
+  return [...tally.values()]
+    .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name))
+    .slice(0, limit)
 }

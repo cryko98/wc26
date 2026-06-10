@@ -42,15 +42,26 @@ Netlify, GitHub Pages, or any static host.
 2. **Squad & Tactics** — pick a formation (4-4-2, 4-3-3, 5-2-3, 3-5-2, 4-2-3-1),
    set mentality + tempo + width, and tweak your starting XI. Tap a player on the
    pitch or in the squad list, then tap another player to swap them.
-3. **Group Stage** — play your three group matches (the other 11 groups are
+3. **Pre-match prep** — before **every** match you get a full team-talk screen to
+   change formation, instructions and your lineup against that specific opponent.
+4. **Live match** — the match plays out half-by-half with a running clock and a
+   live feed. Choose the playback **speed** (Slow / Normal / Fast) or **Skip ahead**.
+5. **Halftime team talk** — the match pauses at the break so you can switch your
+   **mentality / tempo / width** and make up to **5 substitutions** (fresh legs cost
+   a sub; bringing an original starter back doesn't). Your second-half strength
+   reflects the changes.
+6. **Full time** — see **match stats** (possession, shots, on target, corners) and
+   the **Player of the Match**.
+7. **Group Stage** — play your three group matches (the other 11 groups are
    simulated in the background so full standings and the best-third-place ranking
    can be computed).
-4. **Result** — see your group table and whether you advanced (top 2, or one of the
-   8 best third-placed teams).
-5. **Knockouts** — Round of 32 → Round of 16 → Quarter-finals → Semi-finals → Final.
+8. **Result** — your group table, whether you advanced (top 2, or one of the 8 best
+   third-placed teams), and the **Golden Boot** top-scorers race.
+9. **Knockouts** — Round of 32 → Round of 16 → Quarter-finals → Semi-finals → Final.
    Level after 90' goes to extra time, then penalties — every knockout produces a
    winner.
-6. **End** — lift the trophy 🏆 or bow out, then **Restart tournament** to go again.
+10. **End** — lift the trophy 🏆 or bow out (with a Golden Boot leaderboard and your
+    full run summary), then **Restart tournament** to go again.
 
 Tournament progress lives in in-memory React state and **resets on refresh** (by
 design for v1 — no `localStorage`/`sessionStorage` is used).
@@ -105,7 +116,12 @@ The on-screen `CA: …` line and the Copy button both read from this one value.
 - **Goals** are sampled from a **Poisson model** driven by the strength differential
   between the two sides (each team gets an expected-goals figure, then a score is
   sampled).
-- **Match feed** shows the key events — goals with minute + scorer.
+- **Half-by-half** — each half is simulated as its own segment, so your **halftime
+  adjustments** (strategy + substitutions) genuinely change the second-half result.
+- **Match feed** shows the key events — goals with minute + scorer — at your chosen
+  playback speed.
+- **Match stats** (possession, shots, on target, corners) and a **Player of the
+  Match** are derived from the two sides and the final score.
 - **Knockouts** add extra time and a GK-weighted **penalty shootout** when needed.
 - **Group tiebreakers**: points → goal difference → goals scored → head-to-head →
   random fallback.
@@ -114,10 +130,10 @@ All of the logic lives in small, readable modules under `src/lib/`:
 
 | File | Responsibility |
 | --- | --- |
-| `sim.ts` | Match simulation, xG model, extra time, penalties |
+| `sim.ts` | Match simulation, xG model, half segments, ET, penalties, stats, POTM |
 | `standings.ts` | Group fixtures, tables, tiebreakers, best-third ranking |
 | `bracket.ts` | Knockout bracket construction + seeding |
-| `engine.ts` | Orchestration that wires data + sim + standings + bracket |
+| `engine.ts` | Orchestration that wires data + sim + standings + bracket, Golden Boot |
 | `formations.ts` | Formation pitch coordinates + positional shapes |
 | `format.ts` | Display helpers (surnames, rating → stars, colours) |
 
@@ -134,10 +150,15 @@ src/
 ├─ components/
 │  ├─ Header.tsx              # WC26 wordmark, $WC26 ticker, CA + copy
 │  ├─ TeamSelect.tsx          # landing / team picker
-│  ├─ TacticsBoard.tsx        # 3-panel squad & tactics screen
-│  ├─ Pitch.tsx · SquadList.tsx · Jersey.tsx · StarRating.tsx
+│  ├─ TacticsBoard.tsx        # initial squad & tactics screen
+│  ├─ TacticsEditor.tsx       # shared 3-panel editor (formation, pitch, squad)
+│  ├─ MatchPrep.tsx           # pre-match team talk (reuses TacticsEditor)
+│  ├─ LiveMatch.tsx           # half-by-half live match + speed + full-time stats
+│  ├─ HalftimePanel.tsx       # halftime strategy change + substitutions
+│  ├─ Pitch.tsx · SquadList.tsx · Jersey.tsx · StarRating.tsx · Segmented.tsx
+│  ├─ MatchStatsView.tsx · GoldenBoot.tsx
 │  ├─ GroupStage.tsx · GroupTable.tsx · GroupResult.tsx
-│  ├─ Knockout.tsx · Bracket.tsx · MatchSim.tsx
+│  ├─ Knockout.tsx · Bracket.tsx
 │  └─ EndScreen.tsx · RunHistory.tsx
 ├─ App.tsx                    # screen router by game phase
 └─ main.tsx                   # entry point

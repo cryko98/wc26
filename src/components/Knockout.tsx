@@ -4,53 +4,70 @@ import { ROUND_ORDER } from '../lib/bracket'
 import { useTournament } from '../state/TournamentProvider'
 import { BracketView } from './Bracket'
 import { Jersey } from './Jersey'
-import { MatchSim } from './MatchSim'
+import { LiveMatch } from './LiveMatch'
+import { MatchPrep } from './MatchPrep'
+
+type Mode = 'overview' | 'prep' | 'live'
 
 export function Knockout() {
-  const { state, userTeam, userKnockoutSlot, playKnockout, resolveKnockout } = useTournament()
-  const [viewingMatch, setViewingMatch] = useState(false)
+  const { state, userTeam, userKnockoutSlot, recordKnockoutResult } = useTournament()
+  const [mode, setMode] = useState<Mode>('overview')
 
   const team = userTeam!
   const userId = team.id
   const round = state.currentRound!
 
-  // Showing the deciding match feed.
-  if (viewingMatch && state.lastMatch) {
-    const pending = state.pendingKO
-    const nextRound = ROUND_ORDER[ROUND_ORDER.indexOf(round) + 1]
-    const continueLabel =
-      pending === 'champion'
-        ? '🏆 Lift the trophy'
-        : pending === 'eliminated'
-          ? 'See how far you got'
-          : nextRound
-            ? `On to the ${nextRound}`
-            : 'Continue'
+  const slot = userKnockoutSlot
+  const opponentId = slot ? (slot.home === userId ? slot.away : slot.home) : undefined
+  const opponent = opponentId ? getTeam(opponentId) : undefined
+  const roundIndex = ROUND_ORDER.indexOf(round)
+  const nextRound = ROUND_ORDER[roundIndex + 1]
+
+  // ── Pre-match prep ──────────────────────────────────────────────────────────
+  if (mode === 'prep' && opponentId) {
     return (
-      <MatchSim
-        result={state.lastMatch}
+      <MatchPrep
+        opponentId={opponentId}
+        stageLabel={`${round} · Win or go home`}
+        kickOffLabel={round}
+        onKickOff={() => setMode('live')}
+      />
+    )
+  }
+
+  // ── Live match ──────────────────────────────────────────────────────────────
+  if (mode === 'live' && slot && slot.home && slot.away) {
+    return (
+      <LiveMatch
+        homeId={slot.home}
+        awayId={slot.away}
+        matchStage={round}
+        knockout
         userTeamId={userId}
         title={`${team.flag} ${team.name} · ${round}`}
-        continueLabel={continueLabel}
-        onContinue={() => {
-          setViewingMatch(false)
-          resolveKnockout()
+        continueText={(r) => {
+          const won =
+            (r.penalties
+              ? r.penalties.home > r.penalties.away
+                ? r.home
+                : r.away
+              : r.homeScore >= r.awayScore
+                ? r.home
+                : r.away) === userId
+          if (!won) return 'See how far you got'
+          if (round === 'Final') return '🏆 Lift the trophy'
+          return nextRound ? `On to the ${nextRound}` : 'Continue'
+        }}
+        onComplete={(result) => {
+          // Records result, simulates the rest of the round, advances the phase.
+          recordKnockoutResult(result)
+          setMode('overview')
         }}
       />
     )
   }
 
-  const slot = userKnockoutSlot
-  const opponentId = slot ? (slot.home === userId ? slot.away : slot.home) : undefined
-  const opponent = opponentId ? getTeam(opponentId) : undefined
-
-  function play() {
-    playKnockout()
-    setViewingMatch(true)
-  }
-
-  const roundIndex = ROUND_ORDER.indexOf(round)
-
+  // ── Overview ────────────────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -63,7 +80,6 @@ export function Knockout() {
             </p>
           </div>
         </div>
-        {/* Round progress pips */}
         <div className="flex items-center gap-1.5">
           {ROUND_ORDER.map((r, i) => (
             <span
@@ -77,7 +93,6 @@ export function Knockout() {
         </div>
       </div>
 
-      {/* Upcoming match */}
       {opponent && (
         <div className="panel relative mb-6 overflow-hidden p-6 animate-fade-up">
           <div className="pointer-events-none absolute inset-0 bg-radial-glow opacity-60" />
@@ -102,8 +117,8 @@ export function Knockout() {
               Level after 90&apos; → extra time, then penalties. Someone has to win.
             </p>
             <div className="mt-5 flex justify-center">
-              <button onClick={play} className="btn-volt px-6 py-3 text-base">
-                ⚽ Play {round}
+              <button onClick={() => setMode('prep')} className="btn-volt px-6 py-3 text-base">
+                📋 Set up &amp; play {round}
               </button>
             </div>
           </div>

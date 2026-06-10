@@ -1,5 +1,5 @@
 import type { SquadTeam } from '../data/teams'
-import type { MatchEvent, MatchResult, Player, Tactics } from '../types'
+import type { MatchEvent, MatchResult, MatchStats, Player, Tactics } from '../types'
 import { FORMATIONS } from './formations'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ export function userSide(team: SquadTeam, tactics: Tactics): SimSide {
 }
 
 // Expected goals for `a` against `b`.
-function expectedGoals(a: SimSide, b: SimSide): number {
+export function expectedGoals(a: SimSide, b: SimSide): number {
   const diff = a.strength - b.strength
   const xg = BASE_XG * Math.exp(diff * 0.038) * a.attMod * b.defMod
   return Math.max(0.18, Math.min(xg, 4.2))
@@ -200,6 +200,97 @@ function penaltyShootout(home: SimSide, away: SimSide): { home: number; away: nu
   return { home: h, away: a }
 }
 
+// ── Segment simulation (for live, half-by-half matches) ──────────────────────
+
+export interface SegmentResult {
+  events: MatchEvent[]
+  homeGoals: number
+  awayGoals: number
+}
+
+// Simulate a slice of a match over [fromMin, toMin), with expected goals scaled
+// by `fraction` (e.g. 0.5 for a half, ~0.34 for the 30 minutes of extra time).
+// Each side's SimSide can carry different tactics than the other half — that's
+// how halftime adjustments take effect.
+export function simulateSegment(
+  home: SimSide,
+  away: SimSide,
+  fromMin: number,
+  toMin: number,
+  fraction: number,
+): SegmentResult {
+  const xgHome = expectedGoals(home, away) * fraction
+  const xgAway = expectedGoals(away, home) * fraction
+  const homeGoals = poisson(xgHome)
+  const awayGoals = poisson(xgAway)
+  const events = buildEvents(home, away, homeGoals, awayGoals, fromMin, toMin)
+  return { events, homeGoals, awayGoals }
+}
+
+export { penaltyShootout }
+
+// ── Match stats + player of the match ────────────────────────────────────────
+
+// Derive plausible possession / shots from the two sides + the final score.
+export function computeMatchStats(
+  home: SimSide,
+  away: SimSide,
+  homeScore: number,
+  awayScore: number,
+): MatchStats {
+  const xgH = expectedGoals(home, away)
+  const xgA = expectedGoals(away, home)
+
+  // Possession leans toward the stronger / higher-tempo side.
+  const diff = home.strength - away.strength
+  let homePossession = Math.round(50 + diff * 1.4)
+  homePossession = Math.max(32, Math.min(68, homePossession))
+
+  const jitter = (base: number) => Math.max(0, Math.round(base + (Math.random() * 4 - 2)))
+  const homeShots = Math.max(homeScore, jitter(xgH * 3.4 + 4))
+  const awayShots = Math.max(awayScore, jitter(xgA * 3.4 + 4))
+  const homeOnTarget = Math.max(homeScore, Math.round(homeShots * 0.42))
+  const awayOnTarget = Math.max(awayScore, Math.round(awayShots * 0.42))
+
+  return {
+    homePossession,
+    homeShots,
+    awayShots,
+    homeOnTarget,
+    awayOnTarget,
+    homeCorners: jitter(xgH * 2 + 2),
+    awayCorners: jitter(xgA * 2 + 2),
+  }
+}
+
+// Pick a Player of the Match — favours scorers and the winning side.
+export function pickPotm(
+  home: SimSide,
+  away: SimSide,
+  events: MatchEvent[],
+  homeScore: number,
+  awayScore: number,
+): { name: string; teamId: string } {
+  const winnerId =
+    homeScore === awayScore ? null : homeScore > awayScore ? home.team.id : away.team.id
+  const goalsByName = new Map<string, number>()
+  for (const e of events) {
+    if (e.kind === 'goal') goalsByName.set(e.scorer, (goalsByName.get(e.scorer) ?? 0) + 1)
+  }
+
+  let best: { name: string; teamId: string; score: number } | null = null
+  for (const side of [home, away]) {
+    for (const p of side.xi) {
+      const goals = goalsByName.get(p.name) ?? 0
+      const onWinner = winnerId === side.team.id ? 6 : winnerId === null ? 2 : 0
+      const gkBonus = p.position === 'GK' && winnerId === side.team.id ? 5 : 0
+      const score = p.rating * 0.4 + goals * 18 + onWinner + gkBonus + Math.random() * 6
+      if (!best || score > best.score) best = { name: p.name, teamId: side.team.id, score }
+    }
+  }
+  return best ? { name: best.name, teamId: best.teamId } : { name: home.xi[0].name, teamId: home.team.id }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export interface SimOptions {
@@ -208,6 +299,10 @@ export interface SimOptions {
 }
 
 let _matchSeq = 0
+
+export function nextMatchId(): string {
+  return `m${_matchSeq++}`
+}
 
 export function simulateMatch(home: SimSide, away: SimSide, opts: SimOptions): MatchResult {
   const xgHome = expectedGoals(home, away)
@@ -238,7 +333,7 @@ export function simulateMatch(home: SimSide, away: SimSide, opts: SimOptions): M
   }
 
   return {
-    id: `m${_matchSeq++}`,
+    id: nextMatchId(),
     home: home.team.id,
     away: away.team.id,
     homeScore,
@@ -247,6 +342,8 @@ export function simulateMatch(home: SimSide, away: SimSide, opts: SimOptions): M
     extraTime: extraTime || undefined,
     penalties,
     events,
+    stats: computeMatchStats(home, away, homeScore, awayScore),
+    potm: pickPotm(home, away, events, homeScore, awayScore),
   }
 }
 

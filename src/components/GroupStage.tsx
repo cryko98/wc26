@@ -2,13 +2,16 @@ import { useMemo, useState } from 'react'
 import { getTeam, teamsByGroup } from '../data/teams'
 import { computeTable, groupFixtures } from '../lib/standings'
 import { useTournament } from '../state/TournamentProvider'
-import { Jersey } from './Jersey'
 import { GroupTableView } from './GroupTable'
-import { MatchSim } from './MatchSim'
+import { Jersey } from './Jersey'
+import { LiveMatch } from './LiveMatch'
+import { MatchPrep } from './MatchPrep'
+
+type Mode = 'overview' | 'prep' | 'live'
 
 export function GroupStage() {
-  const { state, userTeam, playGroupMatch, finishGroup } = useTournament()
-  const [viewingMatch, setViewingMatch] = useState(false)
+  const { state, userTeam, recordGroupResult, finishGroup } = useTournament()
+  const [mode, setMode] = useState<Mode>('overview')
 
   const team = userTeam!
   const userId = team.id
@@ -23,24 +26,10 @@ export function GroupStage() {
     return computeTable(team.group, ids, state.groupResults)
   }, [team.group, state.groupResults])
 
-  // Map user fixtures → their played result (if any), in matchday order.
   const userResults = useMemo(
     () => state.groupResults.filter((r) => r.home === userId || r.away === userId),
     [state.groupResults, userId],
   )
-
-  if (viewingMatch && state.lastMatch) {
-    const isLast = state.userFixtureIndex >= 3
-    return (
-      <MatchSim
-        result={state.lastMatch}
-        userTeamId={userId}
-        title={`${team.flag} ${team.name} · Group ${team.group} · Matchday ${state.userFixtureIndex}`}
-        continueLabel={isLast ? 'Group standings' : 'Next'}
-        onContinue={() => setViewingMatch(false)}
-      />
-    )
-  }
 
   const played = state.userFixtureIndex
   const nextFixture = fixtures[played]
@@ -52,11 +41,38 @@ export function GroupStage() {
   const opponent = opponentId ? getTeam(opponentId) : undefined
   const allPlayed = played >= 3
 
-  function play() {
-    playGroupMatch()
-    setViewingMatch(true)
+  // ── Pre-match prep ──────────────────────────────────────────────────────────
+  if (mode === 'prep' && nextFixture && opponentId) {
+    return (
+      <MatchPrep
+        opponentId={opponentId}
+        stageLabel={`Group ${team.group} · Matchday ${played + 1}`}
+        kickOffLabel={`vs ${opponent!.name}`}
+        onKickOff={() => setMode('live')}
+      />
+    )
   }
 
+  // ── Live match ──────────────────────────────────────────────────────────────
+  if (mode === 'live' && nextFixture) {
+    return (
+      <LiveMatch
+        homeId={nextFixture.home}
+        awayId={nextFixture.away}
+        matchStage={`Group ${team.group}`}
+        knockout={false}
+        userTeamId={userId}
+        title={`${team.flag} ${team.name} · Group ${team.group} · Matchday ${played + 1}`}
+        continueText={() => (played >= 2 ? 'Group standings' : 'Next')}
+        onComplete={(result) => {
+          recordGroupResult(result)
+          setMode('overview')
+        }}
+      />
+    )
+  }
+
+  // ── Overview ────────────────────────────────────────────────────────────────
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-center gap-3">
@@ -70,9 +86,7 @@ export function GroupStage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
-        {/* LEFT — fixtures + next match */}
         <div className="flex flex-col gap-4">
-          {/* Next match / finish CTA */}
           {!allPlayed ? (
             <div className="panel relative overflow-hidden p-5 animate-fade-up">
               <div className="pointer-events-none absolute inset-0 bg-radial-glow opacity-60" />
@@ -94,8 +108,8 @@ export function GroupStage() {
                   </div>
                 </div>
                 <div className="mt-4 flex justify-center">
-                  <button onClick={play} className="btn-volt px-6 py-3 text-base">
-                    ⚽ Play Match
+                  <button onClick={() => setMode('prep')} className="btn-volt px-6 py-3 text-base">
+                    📋 Set up &amp; play
                   </button>
                 </div>
               </div>
@@ -114,7 +128,6 @@ export function GroupStage() {
             </div>
           )}
 
-          {/* Your fixtures */}
           <div className="panel p-4">
             <h3 className="label mb-3">Your fixtures</h3>
             <ul className="flex flex-col divide-y divide-white/5">
@@ -150,7 +163,6 @@ export function GroupStage() {
           </div>
         </div>
 
-        {/* RIGHT — live group table */}
         <div className="flex flex-col gap-3">
           <GroupTableView table={liveTable} userTeamId={userId} />
           <p className="px-1 text-xs leading-relaxed text-slate-500">

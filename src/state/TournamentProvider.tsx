@@ -3,10 +3,8 @@ import { getTeam } from '../data/teams'
 import { buildBracket, deriveQualifiers, ROUND_ORDER } from '../lib/bracket'
 import {
   computeAllTables,
+  resolveRoundWithUserResult,
   simulateBackgroundGroups,
-  simGroupMatch,
-  simulateKnockoutRound,
-  userGroupFixtures,
   userGroupOutcome,
   userSlotInRound,
   type GroupOutcome,
@@ -88,10 +86,9 @@ interface State {
   groupOutcome?: GroupOutcome
   bracket: BracketSlot[]
   currentRound?: KnockoutRoundName
-  lastMatch?: MatchResult // most recent match for the MatchSim screen
+  lastMatch?: MatchResult // most recent finished match
   userHistory: MatchResult[] // user's own matches, in order
   eliminatedRound?: string
-  pendingKO?: 'advance' | 'champion' | 'eliminated' // outcome awaiting the match feed
 }
 
 const emptyTactics: Tactics = {
@@ -120,11 +117,10 @@ type Action =
   | { type: 'SET_TACTIC'; key: 'mentality' | 'tempo' | 'width'; value: string }
   | { type: 'SET_XI'; startingXI: string[] }
   | { type: 'KICK_OFF' } // tactics → group, sim background groups
-  | { type: 'PLAY_GROUP_MATCH' } // sim next user group fixture
+  | { type: 'RECORD_GROUP_RESULT'; result: MatchResult } // a finished user group match
   | { type: 'FINISH_GROUP' } // group → group-result (compute advancement)
   | { type: 'START_KNOCKOUT' } // group-result → knockout (build bracket)
-  | { type: 'PLAY_KNOCKOUT' } // sim current knockout round
-  | { type: 'RESOLVE_KNOCKOUT' } // after the match feed: advance / win / eliminate
+  | { type: 'RECORD_KNOCKOUT_RESULT'; result: MatchResult } // a finished user KO match
   | { type: 'RESTART' }
 
 function reducer(state: State, action: Action): State {
@@ -178,19 +174,15 @@ function reducer(state: State, action: Action): State {
       }
     }
 
-    case 'PLAY_GROUP_MATCH': {
-      const userId = state.userTeamId!
-      const fixtures = userGroupFixtures(userId)
-      const fx = fixtures[state.userFixtureIndex]
-      if (!fx) return state
-      const team = getTeam(userId)!
-      const result = simGroupMatch(fx.home, fx.away, team.group, userId, state.tactics)
+    case 'RECORD_GROUP_RESULT': {
+      // The live match component simulates the game (with halftime control) and
+      // hands the finished result back here to be recorded.
       return {
         ...state,
-        groupResults: [...state.groupResults, result],
+        groupResults: [...state.groupResults, action.result],
         userFixtureIndex: state.userFixtureIndex + 1,
-        lastMatch: result,
-        userHistory: [...state.userHistory, result],
+        lastMatch: action.result,
+        userHistory: [...state.userHistory, action.result],
       }
     }
 
@@ -222,42 +214,26 @@ function reducer(state: State, action: Action): State {
       }
     }
 
-    case 'PLAY_KNOCKOUT': {
+    case 'RECORD_KNOCKOUT_RESULT': {
+      // The live match already played out; apply it, simulate the rest of the
+      // round, and move the user's phase based on the outcome.
       const userId = state.userTeamId!
       const round = state.currentRound!
-      const outcome = simulateKnockoutRound(state.bracket, round, userId, state.tactics)
-      const pending: State['pendingKO'] = !outcome.userWon
-        ? 'eliminated'
-        : outcome.isFinal
-          ? 'champion'
-          : 'advance'
-      // Phase stays 'knockout' so the deciding match feed can play out first.
-      return {
+      const outcome = resolveRoundWithUserResult(state.bracket, round, userId, action.result)
+      const base: State = {
         ...state,
         bracket: outcome.bracket,
         lastMatch: outcome.userResult,
         userHistory: [...state.userHistory, outcome.userResult],
-        pendingKO: pending,
       }
-    }
-
-    case 'RESOLVE_KNOCKOUT': {
-      const pending = state.pendingKO
-      if (pending === 'eliminated') {
-        return { ...state, phase: 'eliminated', eliminatedRound: state.currentRound, pendingKO: undefined }
+      if (!outcome.userWon) {
+        return { ...base, phase: 'eliminated', eliminatedRound: round }
       }
-      if (pending === 'champion') {
-        return { ...state, phase: 'champion', pendingKO: undefined }
+      if (outcome.isFinal) {
+        return { ...base, phase: 'champion' }
       }
-      // advance to the next round
-      const idx = ROUND_ORDER.indexOf(state.currentRound!)
-      const nextRound = ROUND_ORDER[idx + 1]
-      return {
-        ...state,
-        currentRound: nextRound ?? state.currentRound,
-        lastMatch: undefined,
-        pendingKO: undefined,
-      }
+      const idx = ROUND_ORDER.indexOf(round)
+      return { ...base, currentRound: ROUND_ORDER[idx + 1] ?? round }
     }
 
     case 'RESTART':
@@ -280,11 +256,10 @@ interface TournamentContextValue {
   setTactic: (key: 'mentality' | 'tempo' | 'width', value: string) => void
   setXI: (ids: string[]) => void
   kickOff: () => void
-  playGroupMatch: () => void
+  recordGroupResult: (result: MatchResult) => void
   finishGroup: () => void
   startKnockout: () => void
-  playKnockout: () => void
-  resolveKnockout: () => void
+  recordKnockoutResult: (result: MatchResult) => void
   restart: () => void
   // derived helpers
   userTeam: ReturnType<typeof getTeam>
@@ -313,11 +288,10 @@ export function TournamentProvider({ children }: { children: ReactNode }) {
       setTactic: (key, value) => dispatch({ type: 'SET_TACTIC', key, value }),
       setXI: (startingXI) => dispatch({ type: 'SET_XI', startingXI }),
       kickOff: () => dispatch({ type: 'KICK_OFF' }),
-      playGroupMatch: () => dispatch({ type: 'PLAY_GROUP_MATCH' }),
+      recordGroupResult: (result) => dispatch({ type: 'RECORD_GROUP_RESULT', result }),
       finishGroup: () => dispatch({ type: 'FINISH_GROUP' }),
       startKnockout: () => dispatch({ type: 'START_KNOCKOUT' }),
-      playKnockout: () => dispatch({ type: 'PLAY_KNOCKOUT' }),
-      resolveKnockout: () => dispatch({ type: 'RESOLVE_KNOCKOUT' }),
+      recordKnockoutResult: (result) => dispatch({ type: 'RECORD_KNOCKOUT_RESULT', result }),
       restart: () => dispatch({ type: 'RESTART' }),
     }),
     [state, userTeam, userKnockoutSlot],

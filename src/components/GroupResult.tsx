@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
 import { getTeam } from '../data/teams'
+import { topScorers } from '../lib/engine'
 import { rankThirds } from '../lib/standings'
 import { useTournament } from '../state/TournamentProvider'
+import { GoldenBoot } from './GoldenBoot'
 import { GroupTableView } from './GroupTable'
 
 const ORDINAL = ['', '1st', '2nd', '3rd', '4th']
@@ -14,6 +16,7 @@ export function GroupResult() {
 
   const thirds = useMemo(() => rankThirds(state.tables), [state.tables])
   const qualifiedThirdSet = new Set(state.qualifiedThirdIds)
+  const scorers = useMemo(() => topScorers(state.groupResults, 8), [state.groupResults])
 
   const advanced = outcome.advanced
 
@@ -121,6 +124,9 @@ export function GroupResult() {
               })}
             </ul>
           </div>
+
+          <h2 className="mb-3 mt-7 font-display text-lg font-bold text-white">Golden Boot</h2>
+          <GoldenBoot scorers={scorers} userTeamId={team.id} />
         </div>
       </div>
     </div>

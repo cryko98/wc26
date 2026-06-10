@@ -28,6 +28,16 @@ export interface MatchEvent {
   kind?: 'goal' | 'penalty-so' // shootout goals are tracked separately for the feed
 }
 
+export interface MatchStats {
+  homePossession: number // 0–100 (away = 100 - home)
+  homeShots: number
+  awayShots: number
+  homeOnTarget: number
+  awayOnTarget: number
+  homeCorners: number
+  awayCorners: number
+}
+
 export interface MatchResult {
   id: string
   home: string // team id
@@ -38,6 +48,8 @@ export interface MatchResult {
   extraTime?: boolean
   penalties?: { home: number; away: number }
   events: MatchEvent[]
+  stats?: MatchStats
+  potm?: { name: string; teamId: string } // player of the match
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,8 +1,21 @@
 import { useMemo } from 'react'
+import { topScorers } from '../lib/engine'
 import { useTournament } from '../state/TournamentProvider'
 import { BracketView } from './Bracket'
+import { GoldenBoot } from './GoldenBoot'
 import { Jersey } from './Jersey'
 import { RunHistory } from './RunHistory'
+import type { MatchResult } from '../types'
+
+function useTournamentScorers(): ReturnType<typeof topScorers> {
+  const { state } = useTournament()
+  return useMemo(() => {
+    const bracketResults = state.bracket
+      .map((s) => s.result)
+      .filter(Boolean) as MatchResult[]
+    return topScorers([...state.groupResults, ...bracketResults], 10)
+  }, [state.groupResults, state.bracket])
+}
 
 function Confetti({ colors }: { colors: string[] }) {
   const pieces = useMemo(
@@ -39,6 +52,7 @@ function Confetti({ colors }: { colors: string[] }) {
 export function Champion() {
   const { state, userTeam, restart } = useTournament()
   const team = userTeam!
+  const scorers = useTournamentScorers()
 
   return (
     <div className="relative mx-auto max-w-5xl px-4 py-10">
@@ -73,7 +87,10 @@ export function Champion() {
             <h2 className="mb-3 font-display text-lg font-bold text-white">Final bracket</h2>
             <BracketView bracket={state.bracket} userTeamId={team.id} />
           </div>
-          <RunHistory matches={state.userHistory} userTeamId={team.id} />
+          <div className="flex flex-col gap-6">
+            <RunHistory matches={state.userHistory} userTeamId={team.id} />
+            <GoldenBoot scorers={scorers} userTeamId={team.id} />
+          </div>
         </div>
       </div>
     </div>
@@ -84,6 +101,7 @@ export function Eliminated() {
   const { state, userTeam, restart } = useTournament()
   const team = userTeam!
   const round = state.eliminatedRound ?? 'the knockouts'
+  const scorers = useTournamentScorers()
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -112,7 +130,10 @@ export function Eliminated() {
           <h2 className="mb-3 font-display text-lg font-bold text-white">How the bracket played out</h2>
           <BracketView bracket={state.bracket} userTeamId={team.id} />
         </div>
-        <RunHistory matches={state.userHistory} userTeamId={team.id} />
+        <div className="flex flex-col gap-6">
+          <RunHistory matches={state.userHistory} userTeamId={team.id} />
+          <GoldenBoot scorers={scorers} userTeamId={team.id} />
+        </div>
       </div>
     </div>
   )
