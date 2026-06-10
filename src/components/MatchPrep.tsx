@@ -1,4 +1,5 @@
 import { getTeam } from '../data/teams'
+import { venueFor } from '../lib/venues'
 import { useTournament } from '../state/TournamentProvider'
 import { Jersey } from './Jersey'
 import { StarRating } from './StarRating'
@@ -22,6 +23,7 @@ export function MatchPrep({ opponentId, stageLabel, kickOffLabel, onKickOff }: M
   const { userTeam } = useTournament()
   const team = userTeam!
   const opponent = getTeam(opponentId)!
+  const { venue } = venueFor(`${stageLabel}-${team.id}-${opponentId}`)
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
@@ -41,9 +43,13 @@ export function MatchPrep({ opponentId, stageLabel, kickOffLabel, onKickOff }: M
                 {opponent.flag} {opponent.name}
               </span>
             </div>
-            <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
-              <span>Opponent strength</span>
-              <StarRating rating={squadStrength(opponentId)} size={12} />
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+              <span className="flex items-center gap-1.5">
+                Opponent strength <StarRating rating={squadStrength(opponentId)} size={12} />
+              </span>
+              <span className="text-slate-500">
+                📍 {venue.stadium}, {venue.city}
+              </span>
             </div>
           </div>
           <button onClick={onKickOff} className="btn-volt px-6 py-3 text-base">

@@ -3,6 +3,7 @@ import { getTeam } from '../data/teams'
 import { surname } from '../lib/format'
 import type { LiveStats, PitchStrength } from '../lib/pitchSim'
 import { aiSide, nextMatchId, penaltyShootout, pickPotm, type SimSide, userSide } from '../lib/sim'
+import { venueFor } from '../lib/venues'
 import { useTournament } from '../state/TournamentProvider'
 import type { FormationName, MatchEvent, MatchResult, MatchStats } from '../types'
 import { HalftimePanel } from './HalftimePanel'
@@ -200,16 +201,25 @@ export function LiveMatch({
       }
     : null
   const liveDisplay = live ? statsFromLive(live) : null
+  const { venue, attendance } = useMemo(
+    () => venueFor(`${matchStage}-${homeId}-${awayId}`),
+    [matchStage, homeId, awayId],
+  )
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
       <div className="panel overflow-hidden p-0 animate-pop-in">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/5 bg-ink-850/60 px-5 py-3">
-          <span className="truncate text-xs font-bold uppercase tracking-[0.12em] text-pitch">
-            {title}
-          </span>
-          <span className="font-mono text-sm text-slate-300">
+        <div className="flex items-center justify-between gap-2 border-b border-white/5 bg-ink-850/60 px-5 py-3">
+          <div className="min-w-0">
+            <span className="block truncate text-xs font-bold uppercase tracking-[0.12em] text-pitch">
+              {title}
+            </span>
+            <span className="block truncate text-[10px] text-slate-500">
+              📍 {venue.stadium}, {venue.city} · 👥 {attendance.toLocaleString('en-US')}
+            </span>
+          </div>
+          <span className="shrink-0 font-mono text-sm text-slate-300">
             {running ? (
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-flare" />
