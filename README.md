@@ -44,8 +44,10 @@ Netlify, GitHub Pages, or any static host.
    pitch or in the squad list, then tap another player to swap them.
 3. **Pre-match prep** — before **every** match you get a full team-talk screen to
    change formation, instructions and your lineup against that specific opponent.
-4. **Live match** — the match plays out half-by-half with a running clock and a
-   live feed. Choose the playback **speed** (Slow / Normal / Fast) or **Skip ahead**.
+4. **Live match** — watch the game on an **animated 2D pitch**: both teams are
+   numbered circles (with surnames) that move and follow the ball, the ball drifts
+   with play, and goals trigger a **GOAL!** burst. A half lasts ~90 seconds at
+   Normal speed; choose the playback **speed** (Slow / Normal / Fast) or **Skip ahead**.
 5. **Halftime team talk** — the match pauses at the break so you can switch your
    **mentality / tempo / width** and make up to **5 substitutions** (fresh legs cost
    a sub; bringing an original starter back doesn't). Your second-half strength
@@ -89,9 +91,9 @@ To replace a squad, just paste new tuples. To move a team to a different group,
 change its `group` field (and the array it lives in). Aim for ~15 players per team
 with at least one GK and enough outfielders to fill any formation.
 
-> ⚠️ The 2026 group allocation in this file is a **plausible, editable placeholder**
-> (see the `// TODO: verify/replace with the official 2026 group draw` comment).
-> Swap in the official draw whenever you like.
+> ✅ The groups in this file are the **real, official 2026 FIFA World Cup final
+> draw** (all 48 qualified nations in their actual groups A–L; Italy did not
+> qualify). Squads are real current internationals and are freely editable.
 
 ---
 
@@ -153,7 +155,8 @@ src/
 │  ├─ TacticsBoard.tsx        # initial squad & tactics screen
 │  ├─ TacticsEditor.tsx       # shared 3-panel editor (formation, pitch, squad)
 │  ├─ MatchPrep.tsx           # pre-match team talk (reuses TacticsEditor)
-│  ├─ LiveMatch.tsx           # half-by-half live match + speed + full-time stats
+│  ├─ LiveMatch.tsx           # half-by-half live match (90s/half) + speed + stats
+│  ├─ PitchMatch.tsx          # animated 2D pitch: moving players, ball, GOAL! fx
 │  ├─ HalftimePanel.tsx       # halftime strategy change + substitutions
 │  ├─ Pitch.tsx · SquadList.tsx · Jersey.tsx · StarRating.tsx · Segmented.tsx
 │  ├─ MatchStatsView.tsx · GoldenBoot.tsx

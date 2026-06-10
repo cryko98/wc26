@@ -12,17 +12,18 @@ import {
   userSide,
 } from '../lib/sim'
 import { useTournament } from '../state/TournamentProvider'
-import type { MatchEvent, MatchResult } from '../types'
+import type { FormationName, MatchEvent, MatchResult } from '../types'
 import { HalftimePanel } from './HalftimePanel'
 import { Jersey } from './Jersey'
 import { MatchStatsView } from './MatchStatsView'
+import { PitchMatch, type GoalSignal } from './PitchMatch'
 
 type Stage = 'firstHalf' | 'halftime' | 'secondHalf' | 'extraTime' | 'fulltime'
 
 interface LiveMatchProps {
   homeId: string
   awayId: string
-  matchStage: string // e.g. 'Group A' or 'Round of 32' (stored on the result)
+  matchStage: string
   knockout: boolean
   userTeamId: string
   title: string
@@ -31,12 +32,15 @@ interface LiveMatchProps {
   continueText?: (r: MatchResult) => string
 }
 
-const SPEEDS = { Slow: 130, Normal: 78, Fast: 28 } as const
+// Game-minutes simulated per real second at 1× speed → a 45' half lasts 90s.
+const MIN_PER_SEC = 0.5
+const SPEEDS = { Slow: 0.5, Normal: 1, Fast: 3 } as const
 type SpeedName = keyof typeof SPEEDS
 
 const byMinute = (a: MatchEvent, b: MatchEvent) => a.minute - b.minute
-const goalEvents = (events: MatchEvent[], teamId: string) =>
-  events.filter((e) => e.team === teamId && (e.kind === 'goal' || !e.kind))
+const isGoal = (e: MatchEvent) => e.kind === 'goal' || !e.kind
+const goalsFor = (events: MatchEvent[], teamId: string) =>
+  events.filter((e) => e.team === teamId && isGoal(e))
 
 export function LiveMatch({
   homeId,
@@ -60,12 +64,15 @@ export function LiveMatch({
   const [events, setEvents] = useState<MatchEvent[]>([])
   const [penalties, setPenalties] = useState<{ home: number; away: number } | undefined>()
   const [speed, setSpeed] = useState<SpeedName>('Normal')
+  const [ready, setReady] = useState(false)
+  const [goal, setGoal] = useState<GoalSignal | null>(null)
 
-  // Refs that must survive re-renders / StrictMode double-invokes.
   const oppSideRef = useRef<SimSide | null>(null)
   const sidesRef = useRef<{ home: SimSide; away: SimSide } | null>(null)
   const kickoffXIRef = useRef<string[]>([])
   const usedEtRef = useRef(false)
+  const firedRef = useRef(0)
+  const goalKeyRef = useRef(0)
   const guards = useRef<Set<string>>(new Set())
   const once = (key: string) => {
     if (guards.current.has(key)) return false
@@ -73,14 +80,13 @@ export function LiveMatch({
     return true
   }
 
-  // Assemble home/away SimSides given the user's current side object.
   function assemble(u: SimSide) {
     return userIsHome
       ? { home: u, away: oppSideRef.current! }
       : { home: oppSideRef.current!, away: u }
   }
 
-  // Kick-off: build sides + simulate the first half (once).
+  // Kick-off: build sides + simulate the first half.
   useEffect(() => {
     if (!once('init')) return
     oppSideRef.current = aiSide(getTeam(opponentId)!)
@@ -90,41 +96,45 @@ export function LiveMatch({
     sidesRef.current = sides
     const fh = simulateSegment(sides.home, sides.away, 1, 46, 0.5)
     setEvents(fh.events.sort(byMinute))
+    setReady(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Animate the running clock during a half.
-  const tickMs = SPEEDS[speed]
+  // Advance the match clock (float game-minutes) while a half is in progress.
   useEffect(() => {
     const animating = stage === 'firstHalf' || stage === 'secondHalf' || stage === 'extraTime'
     if (!animating) return
     const target = stage === 'firstHalf' ? 45 : stage === 'secondHalf' ? 90 : 120
     const id = window.setInterval(() => {
-      setClock((c) => {
-        if (c + 1 >= target) {
-          window.clearInterval(id)
-          return target
-        }
-        return c + 1
-      })
-    }, tickMs)
+      setClock((c) => Math.min(target, c + 0.05 * MIN_PER_SEC * SPEEDS[speed]))
+    }, 50)
     return () => window.clearInterval(id)
-  }, [stage, tickMs])
+  }, [stage, speed])
 
-  // Handle stage transitions when the clock reaches a boundary.
+  // Fire goal effects as the clock passes each goal's minute.
   useEffect(() => {
-    if (stage === 'firstHalf' && clock >= 45 && once('ht')) {
-      setStage('halftime')
-    } else if (stage === 'secondHalf' && clock >= 90 && once('endReg')) {
-      endRegulation()
-    } else if (stage === 'extraTime' && clock >= 120 && once('endEt')) {
-      endExtraTime()
+    const goals = events.filter(isGoal).sort(byMinute)
+    while (firedRef.current < goals.length && goals[firedRef.current].minute <= clock) {
+      const g = goals[firedRef.current]
+      firedRef.current++
+      setGoal({
+        key: ++goalKeyRef.current,
+        team: g.team === homeId ? 'home' : 'away',
+        scorer: g.scorer,
+      })
     }
+  }, [clock, events, homeId])
+
+  // Stage transitions.
+  useEffect(() => {
+    if (stage === 'firstHalf' && clock >= 45 && once('ht')) setStage('halftime')
+    else if (stage === 'secondHalf' && clock >= 90 && once('endReg')) endRegulation()
+    else if (stage === 'extraTime' && clock >= 120 && once('endEt')) endExtraTime()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clock, stage])
 
   function currentScore(all: MatchEvent[]) {
-    return { home: goalEvents(all, homeId).length, away: goalEvents(all, awayId).length }
+    return { home: goalsFor(all, homeId).length, away: goalsFor(all, awayId).length }
   }
 
   function endRegulation() {
@@ -154,8 +164,6 @@ export function LiveMatch({
     })
   }
 
-  // Resume after halftime — rebuild the user's side from the (possibly changed)
-  // tactics, then simulate the second half.
   function resumeSecondHalf() {
     if (!once('resume')) return
     const u = userSide(getTeam(userTeamId)!, state.tactics)
@@ -166,10 +174,15 @@ export function LiveMatch({
     setStage('secondHalf')
   }
 
+  function skipSegment() {
+    const target = stage === 'firstHalf' ? 45 : stage === 'secondHalf' ? 90 : 120
+    setClock(target)
+  }
+
   function buildResult(): MatchResult {
     const all = [...events].sort(byMinute)
-    const homeScore = goalEvents(all, homeId).length
-    const awayScore = goalEvents(all, awayId).length
+    const homeScore = goalsFor(all, homeId).length
+    const awayScore = goalsFor(all, awayId).length
     const sides = sidesRef.current!
     return {
       id: nextMatchId(),
@@ -186,15 +199,14 @@ export function LiveMatch({
     }
   }
 
-  function skipSegment() {
-    const target = stage === 'firstHalf' ? 45 : stage === 'secondHalf' ? 90 : 120
-    setClock(target)
-  }
-
-  // ── Derived display values ─────────────────────────────────────────────────
+  // ── Derived display ──────────────────────────────────────────────────────
   const shown = useMemo(() => events.filter((e) => e.minute <= clock), [events, clock])
-  const liveHome = goalEvents(shown, homeId).length
-  const liveAway = goalEvents(shown, awayId).length
+  const liveHome = goalsFor(shown, homeId).length
+  const liveAway = goalsFor(shown, awayId).length
+  const recentGoals = useMemo(
+    () => [...shown.filter(isGoal)].sort((a, b) => b.minute - a.minute).slice(0, 4),
+    [shown],
+  )
   const isFinished = stage === 'fulltime'
   const animating = stage === 'firstHalf' || stage === 'secondHalf' || stage === 'extraTime'
 
@@ -222,9 +234,12 @@ export function LiveMatch({
           : usedEtRef.current
             ? 'AET'
             : 'FT'
-        : `${clock}'`
+        : `${Math.floor(clock)}'`
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const homeFormation: FormationName = userIsHome ? state.tactics.formation : '4-3-3'
+  const awayFormation: FormationName = userIsHome ? '4-3-3' : state.tactics.formation
+  const sides = sidesRef.current
+
   return (
     <div className="mx-auto max-w-2xl px-4 py-6">
       <div className="panel overflow-hidden p-0 animate-pop-in">
@@ -247,19 +262,16 @@ export function LiveMatch({
         </div>
 
         {/* Scoreboard */}
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-5">
-          <div className="flex flex-col items-center gap-2 text-center">
-            <Jersey colors={home.colors} size={52} />
-            <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-100">
-              <span>{home.flag}</span>
-              <span className="truncate">{home.name}</span>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-4">
+          <div className="flex items-center justify-end gap-2 text-right">
+            <span className="truncate text-sm font-semibold text-slate-100">
+              {home.flag} {home.name}
             </span>
+            <Jersey colors={home.colors} size={34} />
           </div>
           <div className="flex flex-col items-center">
-            <div className="font-display text-5xl font-extrabold tabular-nums text-white">
-              {liveHome}
-              <span className="mx-1 text-slate-600">:</span>
-              {liveAway}
+            <div className="font-display text-4xl font-extrabold tabular-nums text-white">
+              {liveHome}<span className="mx-1 text-slate-600">:</span>{liveAway}
             </div>
             {penalties && (
               <span className="mt-1 rounded-full bg-flare/15 px-2 py-0.5 text-xs font-bold text-flare-400">
@@ -267,16 +279,15 @@ export function LiveMatch({
               </span>
             )}
           </div>
-          <div className="flex flex-col items-center gap-2 text-center">
-            <Jersey colors={away.colors} size={52} />
-            <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-100">
-              <span>{away.flag}</span>
-              <span className="truncate">{away.name}</span>
+          <div className="flex items-center gap-2">
+            <Jersey colors={away.colors} size={34} />
+            <span className="truncate text-sm font-semibold text-slate-100">
+              {away.flag} {away.name}
             </span>
           </div>
         </div>
 
-        {/* Halftime team talk replaces the feed while paused */}
+        {/* Body */}
         {stage === 'halftime' ? (
           <div className="border-t border-white/5 p-4">
             <HalftimePanel
@@ -286,48 +297,41 @@ export function LiveMatch({
             />
           </div>
         ) : (
-          <>
-            {/* Feed */}
-            <div className="min-h-[120px] border-t border-white/5 px-5 py-4">
-              {shown.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-500">
-                  {isFinished ? 'No goals.' : 'Kick-off…'}
-                </p>
-              ) : (
-                <ul className="flex flex-col gap-2">
-                  {shown.map((e, i) => {
-                    const isHome = e.team === homeId
-                    return (
-                      <li
-                        key={i}
-                        className={`flex animate-fade-up items-center gap-2 text-sm ${
-                          isHome ? 'justify-start' : 'flex-row-reverse text-right'
-                        }`}
-                      >
-                        <span className="grid h-6 w-9 shrink-0 place-items-center rounded bg-ink-800 font-mono text-xs text-slate-400">
-                          {e.minute}&apos;
-                        </span>
-                        <span className="text-base">⚽</span>
-                        <span className="text-slate-200">
-                          <span className="font-semibold">{surname(e.scorer)}</span>
-                          <span className="ml-1.5 text-xs text-slate-500">
-                            {getTeam(e.team)?.flag}
-                          </span>
-                        </span>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
+          <div className="border-t border-white/5 p-3">
+            {ready && sides ? (
+              <PitchMatch
+                home={{ players: sides.home.xi, formation: homeFormation, colors: home.colors }}
+                away={{ players: sides.away.xi, formation: awayFormation, colors: away.colors }}
+                playing={animating}
+                goal={goal}
+              />
+            ) : (
+              <div className="grid aspect-[8/5] w-full place-items-center text-sm text-slate-500">
+                Walking out…
+              </div>
+            )}
+
+            {/* Goal ticker */}
+            <div className="mt-2 flex min-h-[22px] flex-wrap items-center gap-1.5">
+              {recentGoals.map((e, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-full bg-ink-800 px-2 py-0.5 text-[11px] text-slate-300"
+                >
+                  <span className="font-mono text-slate-500">{e.minute}&apos;</span>⚽{' '}
+                  <span className="font-semibold text-slate-100">{surname(e.scorer)}</span>
+                  <span className="text-slate-500">{getTeam(e.team)?.flag}</span>
+                </span>
+              ))}
             </div>
 
-            {/* Full-time extras: stats + player of the match */}
+            {/* Full-time stats + POTM */}
             {isFinished && result?.stats && (
-              <div className="border-t border-white/5 px-5 py-4">
+              <div className="mt-3 border-t border-white/5 pt-3">
                 <p className="label mb-2.5">Match stats</p>
                 <MatchStatsView stats={result.stats} />
                 {result.potm && (
-                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-volt/20 bg-volt/5 px-3 py-2">
+                  <div className="mt-3 flex items-center gap-2 rounded-lg border border-volt/20 bg-volt/5 px-3 py-2">
                     <span className="text-lg">⭐</span>
                     <span className="text-xs text-slate-400">Player of the Match</span>
                     <span className="ml-auto flex items-center gap-1.5 text-sm font-bold text-white">
@@ -337,7 +341,7 @@ export function LiveMatch({
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* Footer controls */}
