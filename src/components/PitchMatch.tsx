@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { surname } from '../lib/format'
 import {
+  advanceGame,
   createPitchState,
-  rebuildPitchNodes,
-  stepPitch,
-  triggerGoal,
+  type LiveStats,
+  type PitchGoal,
   type PitchState,
+  type PitchStrength,
+  rebuildPitchNodes,
+  startSegment,
+  stepMotion,
 } from '../lib/pitchSim'
 import type { FormationName, Player } from '../types'
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  PitchMatch — renders the live 2D match. The motion model lives in
-//  ../lib/pitchSim (pure + unit-tested); this component just runs it on rAF and
-//  draws the players (numbered circles + surname) and the ball.
-// ─────────────────────────────────────────────────────────────────────────────
+export const MIN_PER_SEC = 0.5 // game-minutes per real second at 1× → 90s per half
 
 interface TeamView {
   players: Player[]
@@ -21,35 +21,68 @@ interface TeamView {
   colors: [string, string]
 }
 
-export interface GoalSignal {
-  key: number
-  team: 'home' | 'away'
-  scorer: string
-}
-
 interface PitchMatchProps {
   home: TeamView
   away: TeamView
-  playing: boolean
-  goal: GoalSignal | null
+  strength: PitchStrength
+  running: boolean
+  speed: number
+  segEnd: number
+  skipKey: number
+  onClock: (min: number) => void
+  onGoal: (g: PitchGoal) => void
+  onStats: (s: LiveStats) => void
+  onSegmentEnd: () => void
 }
 
-export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
+// Renders the live 2D match and drives the (pure) engine in lib/pitchSim.
+export function PitchMatch({
+  home,
+  away,
+  strength,
+  running,
+  speed,
+  segEnd,
+  skipKey,
+  onClock,
+  onGoal,
+  onStats,
+  onSegmentEnd,
+}: PitchMatchProps) {
   const stateRef = useRef<PitchState | null>(null)
   if (!stateRef.current) {
     stateRef.current = createPitchState(
       { players: home.players, formation: home.formation },
       { players: away.players, formation: away.formation },
+      strength,
+      { segEnd },
     )
   }
 
+  // Keep latest props in refs so the rAF loop stays stable.
+  const runRef = useRef(running)
+  const speedRef = useRef(speed)
+  const cbRef = useRef({ onClock, onGoal, onStats, onSegmentEnd })
+  runRef.current = running
+  speedRef.current = speed
+  cbRef.current = { onClock, onGoal, onStats, onSegmentEnd }
+  stateRef.current.str = strength
+
+  const endedRef = useRef(false)
+  const statAccRef = useRef(0)
   const lastRef = useRef(0)
   const accRef = useRef(0)
   const rafRef = useRef(0)
   const [, setTick] = useState(0)
   const [banner, setBanner] = useState<{ team: 'home' | 'away'; scorer: string } | null>(null)
 
-  // Rebuild positions when the lineups change (e.g. after halftime subs).
+  // New segment (second half / ET): extend the end minute, allow ending again.
+  useEffect(() => {
+    if (stateRef.current) startSegment(stateRef.current, segEnd)
+    endedRef.current = false
+  }, [segEnd])
+
+  // Rebuild positions when the lineups change (halftime subs).
   const lineupKey = useMemo(
     () => home.players.map((p) => p.id).join() + '|' + away.players.map((p) => p.id).join(),
     [home.players, away.players],
@@ -65,14 +98,37 @@ export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineupKey])
 
-  // Scripted goal → drive the ball to the net + show the burst.
+  function drain(st: PitchState) {
+    if (st.newGoals.length) {
+      const gs = st.newGoals.splice(0)
+      for (const g of gs) {
+        cbRef.current.onGoal(g)
+        setBanner({ team: g.team, scorer: g.scorer })
+        window.setTimeout(() => setBanner(null), 1900)
+      }
+    }
+  }
+
+  // Fast-forward the rest of the current segment.
   useEffect(() => {
-    if (!goal || !stateRef.current) return
-    triggerGoal(stateRef.current, goal.team)
-    setBanner({ team: goal.team, scorer: goal.scorer })
-    const id = window.setTimeout(() => setBanner(null), 1900)
-    return () => window.clearTimeout(id)
-  }, [goal?.key]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (skipKey === 0) return
+    const st = stateRef.current!
+    let guard = 0
+    while (!st.segDone && guard < 4000) {
+      stepMotion(st, 0.05, st.gameMin)
+      advanceGame(st, 0.3)
+      guard++
+    }
+    drain(st)
+    cbRef.current.onClock(st.gameMin)
+    cbRef.current.onStats({ ...st.stats })
+    if (st.segDone && !endedRef.current) {
+      endedRef.current = true
+      cbRef.current.onSegmentEnd()
+    }
+    setTick((t) => t + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skipKey])
 
   useEffect(() => {
     function frame(now: number) {
@@ -82,7 +138,30 @@ export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
       lastRef.current = now
       if (dt > 0.1) dt = 0.1
       const st = stateRef.current!
-      if (playing || st.mode === 'goal') stepPitch(st, dt, now / 1000)
+
+      if (runRef.current && !st.segDone) {
+        stepMotion(st, dt, now / 1000)
+        let gd = dt * MIN_PER_SEC * speedRef.current
+        while (gd > 0) {
+          const c = Math.min(gd, 0.3)
+          advanceGame(st, c)
+          gd -= c
+        }
+        drain(st)
+        cbRef.current.onClock(st.gameMin)
+        statAccRef.current += dt
+        if (statAccRef.current > 0.25) {
+          statAccRef.current = 0
+          cbRef.current.onStats({ ...st.stats })
+        }
+        if (st.segDone && !endedRef.current) {
+          endedRef.current = true
+          cbRef.current.onSegmentEnd()
+        }
+      } else if (st.mode === 'goal') {
+        stepMotion(st, dt, now / 1000)
+      }
+
       accRef.current += dt
       if (accRef.current >= 0.033) {
         accRef.current = 0
@@ -91,7 +170,7 @@ export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
     }
     rafRef.current = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(rafRef.current)
-  }, [playing])
+  }, [])
 
   const state = stateRef.current!
   const nodes = state.nodes
@@ -124,7 +203,7 @@ export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
         return (
           <div
             key={n.id}
-            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center"
+            className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center will-change-transform"
             style={{ left: `${n.x}%`, top: `${n.y}%`, transition: 'left 70ms linear, top 70ms linear' }}
           >
             <span
@@ -141,7 +220,7 @@ export function PitchMatch({ home, away, playing, goal }: PitchMatchProps) {
       })}
 
       <div
-        className="absolute -translate-x-1/2 -translate-y-1/2"
+        className="absolute -translate-x-1/2 -translate-y-1/2 will-change-transform"
         style={{ left: `${ball.x}%`, top: `${ball.y}%`, transition: 'left 60ms linear, top 60ms linear' }}
       >
         <span

@@ -2,9 +2,15 @@ import type { FormationName, Player, Position } from '../types'
 import { FORMATIONS } from './formations'
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Pure 2D match-motion model (no React, no DOM) so it can be unit-tested.
-//  Possession-based: the ball travels player → player as passes, the team in
-//  possession pushes up the pitch, and on a goal the ball is driven to the net.
+//  Pure 2D match engine (no React/DOM) so it can be unit-tested.
+//
+//  Possession model: the ball travels player → player as passes; the team in
+//  possession pushes up the pitch while the other drops; turnovers swap the ball
+//  to the nearest opponent. CRUCIALLY, a goal can only be scored by the team
+//  currently in possession — chances are generated when the possessing team
+//  works the ball into the attacking third, and conversion scales with the two
+//  teams' strengths (so Portugal beats DR Congo far more easily than Spain).
+//
 //  Coordinates: x 0..100 (length, home attacks +x), y 0..100 (width).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -13,13 +19,22 @@ export interface PitchTeam {
   formation: FormationName
 }
 
+export interface PitchStrength {
+  homeStrength: number
+  awayStrength: number
+  homeGk: number
+  awayGk: number
+}
+
 export interface PitchNode {
   id: string
   team: 'home' | 'away'
   number: number
   name: string
+  rating: number
+  pos: Position
   isGK: boolean
-  attack: number // +1 home, -1 away
+  attack: number
   push: number
   drop: number
   bx: number
@@ -28,6 +43,21 @@ export interface PitchNode {
   y: number
   freq: number
   phase: number
+}
+
+export interface LiveStats {
+  homePoss: number // accumulated game-minutes in possession
+  awayPoss: number
+  homeShots: number
+  awayShots: number
+  homeOnTarget: number
+  awayOnTarget: number
+}
+
+export interface PitchGoal {
+  team: 'home' | 'away'
+  scorer: string
+  minute: number
 }
 
 export interface PitchState {
@@ -39,11 +69,22 @@ export interface PitchState {
   dwell: number
   pass: { fromX: number; fromY: number; to: number; t: number; dur: number }
   goal: { team: 'home' | 'away'; t: number } | null
+  str: PitchStrength
+  gameMin: number
+  segEnd: number
+  segDone: boolean
+  stats: LiveStats
+  newGoals: PitchGoal[] // drained by the renderer
   rng: () => number
 }
 
 const PUSH: Record<Position, number> = { GK: 0.05, DEF: 0.5, MID: 0.85, FWD: 1.15 }
 const DROP: Record<Position, number> = { GK: 0.05, DEF: 0.3, MID: 0.8, FWD: 1.15 }
+const SCORER_W: Record<Position, number> = { GK: 0.02, DEF: 1, MID: 3, FWD: 5.5 }
+
+// Tuned so a full 90' yields realistic, strength-sensitive scorelines.
+const SHOT_RATE = 0.9 // shots per attacking-third game-minute (per team)
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by)
 
@@ -63,6 +104,8 @@ export function buildPitchNodes(team: PitchTeam, side: 'home' | 'away'): PitchNo
       team: side,
       number: p.number,
       name: p.name,
+      rating: p.rating,
+      pos: slot.pos,
       isGK: slot.pos === 'GK',
       attack: side === 'home' ? 1 : -1,
       push: PUSH[slot.pos],
@@ -82,7 +125,12 @@ function firstMid(nodes: PitchNode[], team: 'home' | 'away'): number {
   return i < 0 ? 0 : i
 }
 
-export function createPitchState(home: PitchTeam, away: PitchTeam, rng: () => number = Math.random): PitchState {
+export function createPitchState(
+  home: PitchTeam,
+  away: PitchTeam,
+  str: PitchStrength,
+  opts: { segEnd?: number; gameMin?: number; rng?: () => number } = {},
+): PitchState {
   const nodes = [...buildPitchNodes(home, 'home'), ...buildPitchNodes(away, 'away')]
   return {
     nodes,
@@ -93,19 +141,62 @@ export function createPitchState(home: PitchTeam, away: PitchTeam, rng: () => nu
     dwell: 0.6,
     pass: { fromX: 50, fromY: 50, to: 0, t: 0, dur: 0.3 },
     goal: null,
-    rng,
+    str,
+    gameMin: opts.gameMin ?? 0,
+    segEnd: opts.segEnd ?? 45,
+    segDone: false,
+    stats: { homePoss: 0, awayPoss: 0, homeShots: 0, awayShots: 0, homeOnTarget: 0, awayOnTarget: 0 },
+    newGoals: [],
+    rng: opts.rng ?? Math.random,
   }
 }
 
-// Rebuild node positions (e.g. after a substitution) while keeping the run state.
+// Continue into a new segment (second half / extra time) keeping live stats.
+export function startSegment(state: PitchState, segEnd: number, str?: PitchStrength) {
+  state.segEnd = segEnd
+  state.segDone = false
+  if (str) state.str = str
+}
+
 export function rebuildPitchNodes(state: PitchState, home: PitchTeam, away: PitchTeam) {
   state.nodes = [...buildPitchNodes(home, 'home'), ...buildPitchNodes(away, 'away')]
   state.carrier = firstMid(state.nodes, state.poss)
   if (state.mode !== 'goal') state.mode = 'carry'
 }
 
-// Drive the ball from the scoring team's nearest striker into the net.
-export function triggerGoal(state: PitchState, team: 'home' | 'away') {
+function loseToOpponent(state: PitchState) {
+  const { nodes, poss, ball } = state
+  let best = -1
+  let bestD = Infinity
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]
+    if (n.team === poss || n.isGK) continue
+    const d = dist(ball.x, ball.y, n.x, n.y)
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  if (best >= 0) {
+    state.poss = nodes[best].team
+    state.carrier = best
+  }
+  state.mode = 'carry'
+  state.dwell = 0.5 + state.rng() * 0.4
+}
+
+function pickScorer(state: PitchState, team: 'home' | 'away'): string {
+  const mates = state.nodes.filter((n) => n.team === team && !n.isGK)
+  const total = mates.reduce((s, n) => s + SCORER_W[n.pos] * (n.rating / 70), 0)
+  let r = state.rng() * total
+  for (const n of mates) {
+    r -= SCORER_W[n.pos] * (n.rating / 70)
+    if (r <= 0) return n.name
+  }
+  return mates[mates.length - 1]?.name ?? 'Unknown'
+}
+
+function startGoalCelebration(state: PitchState, team: 'home' | 'away') {
   const goalX = team === 'home' ? 99 : 1
   let shooter = -1
   let bestD = Infinity
@@ -124,6 +215,11 @@ export function triggerGoal(state: PitchState, team: 'home' | 'away') {
   state.goal = { team, t: 1.7 }
   state.ball.x = state.nodes[shooter].x
   state.ball.y = state.nodes[shooter].y
+}
+
+// Force a scripted goal (used for penalty-shootout flavour, etc.).
+export function triggerGoal(state: PitchState, team: 'home' | 'away') {
+  startGoalCelebration(state, team)
 }
 
 function chooseReceiver(state: PitchState): number {
@@ -145,25 +241,9 @@ function chooseReceiver(state: PitchState): number {
   return best
 }
 
-function nearestOpponent(state: PitchState): number {
-  const { nodes, poss, ball } = state
-  let best = -1
-  let bestD = Infinity
-  for (let i = 0; i < nodes.length; i++) {
-    const n = nodes[i]
-    if (n.team === poss || n.isGK) continue
-    const d = dist(ball.x, ball.y, n.x, n.y)
-    if (d < bestD) {
-      bestD = d
-      best = i
-    }
-  }
-  return best
-}
-
-// Advance the simulation by `dt` seconds (t = absolute time for wander phase).
-export function stepPitch(state: PitchState, dt: number, t: number) {
-  const { nodes, ball, rng } = state
+// ── Visual motion (per real-time frame) ──────────────────────────────────────
+export function stepMotion(state: PitchState, dt: number, t: number) {
+  const { nodes, ball, rng, str } = state
 
   if (state.mode === 'goal' && state.goal) {
     state.goal.t -= dt
@@ -196,13 +276,11 @@ export function stepPitch(state: PitchState, dt: number, t: number) {
     ball.x += (c.x + c.attack * 2 - ball.x) * Math.min(1, dt * 9)
     ball.y += (c.y - ball.y) * Math.min(1, dt * 9)
     if (state.dwell <= 0) {
-      if (rng() < 0.18) {
-        const opp = nearestOpponent(state)
-        if (opp >= 0) {
-          state.poss = nodes[opp].team
-          state.carrier = opp
-        }
-        state.dwell = 0.5 + rng() * 0.4
+      const possStr = state.poss === 'home' ? str.homeStrength : str.awayStrength
+      const oppStr = state.poss === 'home' ? str.awayStrength : str.homeStrength
+      const tP = clamp(0.16 + (oppStr - possStr) * 0.008, 0.05, 0.45)
+      if (rng() < tP) {
+        loseToOpponent(state)
       } else {
         const to = chooseReceiver(state)
         state.pass = {
@@ -246,4 +324,51 @@ export function stepPitch(state: PitchState, dt: number, t: number) {
     n.x += (clamp(tx, 2, 98) - n.x) * ease
     n.y += (clamp(ty, 5, 95) - n.y) * ease
   }
+}
+
+// ── Game time + scoring (per game-minute delta) ──────────────────────────────
+// Only the team currently in possession can generate a chance/goal.
+export function advanceGame(state: PitchState, gameDelta: number) {
+  if (gameDelta <= 0) return
+  state.gameMin = Math.min(state.segEnd, state.gameMin + gameDelta)
+  if (state.poss === 'home') state.stats.homePoss += gameDelta
+  else state.stats.awayPoss += gameDelta
+
+  if (state.mode === 'carry') {
+    const inThird =
+      (state.poss === 'home' && state.ball.x > 64) || (state.poss === 'away' && state.ball.x < 36)
+    if (inThird && state.rng() < SHOT_RATE * gameDelta) {
+      const poss = state.poss
+      const possStr = poss === 'home' ? state.str.homeStrength : state.str.awayStrength
+      const oppStr = poss === 'home' ? state.str.awayStrength : state.str.homeStrength
+      const oppGk = poss === 'home' ? state.str.awayGk : state.str.homeGk
+      if (poss === 'home') state.stats.homeShots++
+      else state.stats.awayShots++
+
+      const onTargetP = clamp(0.42 + (possStr - 78) * 0.008, 0.25, 0.72)
+      if (state.rng() < onTargetP) {
+        if (poss === 'home') state.stats.homeOnTarget++
+        else state.stats.awayOnTarget++
+        const convP = clamp(
+          0.34 + (possStr - oppStr) * 0.014 - (oppGk - 78) * 0.007,
+          0.05,
+          0.8,
+        )
+        if (state.rng() < convP) {
+          state.newGoals.push({
+            team: poss,
+            scorer: pickScorer(state, poss),
+            minute: Math.max(1, Math.floor(state.gameMin)),
+          })
+          startGoalCelebration(state, poss)
+        } else {
+          loseToOpponent(state) // saved
+        }
+      } else {
+        loseToOpponent(state) // off target
+      }
+    }
+  }
+
+  if (state.gameMin >= state.segEnd) state.segDone = true
 }
