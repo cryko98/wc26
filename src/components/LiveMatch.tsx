@@ -44,8 +44,8 @@ function statsFromLive(s: LiveStats): MatchStats {
     awayShots: s.awayShots,
     homeOnTarget: s.homeOnTarget,
     awayOnTarget: s.awayOnTarget,
-    homeCorners: Math.round(s.homeShots * 0.35),
-    awayCorners: Math.round(s.awayShots * 0.35),
+    homeCorners: s.homeCorners,
+    awayCorners: s.awayCorners,
   }
 }
 

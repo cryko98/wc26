@@ -6,10 +6,10 @@ import { FORMATIONS } from './formations'
 //
 //  Possession model: the ball travels player → player as passes; the team in
 //  possession pushes up the pitch while the other drops; turnovers swap the ball
-//  to the nearest opponent. CRUCIALLY, a goal can only be scored by the team
-//  currently in possession — chances are generated when the possessing team
-//  works the ball into the attacking third, and conversion scales with the two
-//  teams' strengths (so Portugal beats DR Congo far more easily than Spain).
+//  to the nearest opponent. A goal can only be scored by the team in possession,
+//  and the SCORER is always the player who had the ball just before the goal.
+//  Missed shots can win a corner — at which point the attacking team (defenders
+//  included) crowd the box. Conversion + possession scale with team strength.
 //
 //  Coordinates: x 0..100 (length, home attacks +x), y 0..100 (width).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,12 +46,14 @@ export interface PitchNode {
 }
 
 export interface LiveStats {
-  homePoss: number // accumulated game-minutes in possession
+  homePoss: number
   awayPoss: number
   homeShots: number
   awayShots: number
   homeOnTarget: number
   awayOnTarget: number
+  homeCorners: number
+  awayCorners: number
 }
 
 export interface PitchGoal {
@@ -63,27 +65,27 @@ export interface PitchGoal {
 export interface PitchState {
   nodes: PitchNode[]
   ball: { x: number; y: number }
-  mode: 'carry' | 'pass' | 'goal'
+  mode: 'carry' | 'pass' | 'goal' | 'corner'
   poss: 'home' | 'away'
   carrier: number
   dwell: number
   pass: { fromX: number; fromY: number; to: number; t: number; dur: number }
   goal: { team: 'home' | 'away'; t: number } | null
+  corner: { team: 'home' | 'away'; phase: 'in' | 'delivered'; t: number; flagY: number; target: number } | null
   str: PitchStrength
   gameMin: number
   segEnd: number
   segDone: boolean
   stats: LiveStats
-  newGoals: PitchGoal[] // drained by the renderer
+  newGoals: PitchGoal[]
   rng: () => number
 }
 
-const PUSH: Record<Position, number> = { GK: 0.05, DEF: 0.5, MID: 0.85, FWD: 1.15 }
-const DROP: Record<Position, number> = { GK: 0.05, DEF: 0.3, MID: 0.8, FWD: 1.15 }
-const SCORER_W: Record<Position, number> = { GK: 0.02, DEF: 1, MID: 3, FWD: 5.5 }
+const PUSH: Record<Position, number> = { GK: 0.05, DEF: 0.55, MID: 0.9, FWD: 1.2 }
+const DROP: Record<Position, number> = { GK: 0.05, DEF: 0.28, MID: 0.78, FWD: 1.1 }
 
-// Tuned so a full 90' yields realistic, strength-sensitive scorelines.
-const SHOT_RATE = 0.9 // shots per attacking-third game-minute (per team)
+const SHOT_RATE = 0.9 // shots per attacking-third game-minute
+const CORNER_FROM_MISS = 0.42 // chance a missed/saved shot earns a corner
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const dist = (ax: number, ay: number, bx: number, by: number) => Math.hypot(ax - bx, ay - by)
@@ -114,7 +116,7 @@ export function buildPitchNodes(team: PitchTeam, side: 'home' | 'away'): PitchNo
       by,
       x: bx,
       y: by,
-      freq: 0.5 + (i % 5) * 0.16,
+      freq: 0.45 + (i % 5) * 0.18,
       phase: ((i * 53) % 628) / 100,
     }
   })
@@ -141,21 +143,25 @@ export function createPitchState(
     dwell: 0.6,
     pass: { fromX: 50, fromY: 50, to: 0, t: 0, dur: 0.3 },
     goal: null,
+    corner: null,
     str,
     gameMin: opts.gameMin ?? 0,
     segEnd: opts.segEnd ?? 45,
     segDone: false,
-    stats: { homePoss: 0, awayPoss: 0, homeShots: 0, awayShots: 0, homeOnTarget: 0, awayOnTarget: 0 },
+    stats: { homePoss: 0, awayPoss: 0, homeShots: 0, awayShots: 0, homeOnTarget: 0, awayOnTarget: 0, homeCorners: 0, awayCorners: 0 },
     newGoals: [],
     rng: opts.rng ?? Math.random,
   }
 }
 
-// Continue into a new segment (second half / extra time) keeping live stats.
 export function startSegment(state: PitchState, segEnd: number, str?: PitchStrength) {
   state.segEnd = segEnd
   state.segDone = false
   if (str) state.str = str
+  if (state.mode !== 'goal') {
+    state.mode = 'carry'
+    state.corner = null
+  }
 }
 
 export function rebuildPitchNodes(state: PitchState, home: PitchTeam, away: PitchTeam) {
@@ -182,44 +188,47 @@ function loseToOpponent(state: PitchState) {
     state.carrier = best
   }
   state.mode = 'carry'
+  state.corner = null
   state.dwell = 0.5 + state.rng() * 0.4
-}
-
-function pickScorer(state: PitchState, team: 'home' | 'away'): string {
-  const mates = state.nodes.filter((n) => n.team === team && !n.isGK)
-  const total = mates.reduce((s, n) => s + SCORER_W[n.pos] * (n.rating / 70), 0)
-  let r = state.rng() * total
-  for (const n of mates) {
-    r -= SCORER_W[n.pos] * (n.rating / 70)
-    if (r <= 0) return n.name
-  }
-  return mates[mates.length - 1]?.name ?? 'Unknown'
 }
 
 function startGoalCelebration(state: PitchState, team: 'home' | 'away') {
   const goalX = team === 'home' ? 99 : 1
-  let shooter = -1
-  let bestD = Infinity
-  state.nodes.forEach((n, i) => {
-    if (n.team !== team || n.isGK) return
-    const d = Math.abs(n.x - goalX)
-    if (d < bestD) {
-      bestD = d
-      shooter = i
-    }
-  })
-  if (shooter < 0) shooter = firstMid(state.nodes, team)
+  let shooter = state.carrier
+  if (state.nodes[shooter]?.team !== team) {
+    let bestD = Infinity
+    state.nodes.forEach((n, i) => {
+      if (n.team !== team || n.isGK) return
+      const d = Math.abs(n.x - goalX)
+      if (d < bestD) {
+        bestD = d
+        shooter = i
+      }
+    })
+  }
   state.poss = team
   state.carrier = shooter
   state.mode = 'goal'
+  state.corner = null
   state.goal = { team, t: 1.7 }
   state.ball.x = state.nodes[shooter].x
   state.ball.y = state.nodes[shooter].y
 }
 
-// Force a scripted goal (used for penalty-shootout flavour, etc.).
 export function triggerGoal(state: PitchState, team: 'home' | 'away') {
   startGoalCelebration(state, team)
+}
+
+// Award a corner to the team in possession (defenders will crowd the box).
+function startCorner(state: PitchState) {
+  const team = state.poss
+  if (team === 'home') state.stats.homeCorners++
+  else state.stats.awayCorners++
+  const flagY = state.ball.y < 50 ? 6 : 94
+  state.mode = 'corner'
+  state.corner = { team, phase: 'in', t: 1.3, flagY, target: state.carrier }
+  state.ball.x = team === 'home' ? 97 : 3
+  state.ball.y = flagY
 }
 
 function chooseReceiver(state: PitchState): number {
@@ -241,6 +250,24 @@ function chooseReceiver(state: PitchState): number {
   return best
 }
 
+// Pick the attacker who gets on the end of a corner (forwards/defenders in box).
+function pickBoxTarget(state: PitchState, team: 'home' | 'away'): number {
+  const { nodes, rng } = state
+  let best = -1
+  let bestW = -1
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]
+    if (n.team !== team || n.isGK) continue
+    // Centre-backs and strikers are the usual targets.
+    const w = (n.pos === 'FWD' ? 1.3 : n.pos === 'DEF' ? 1.1 : 0.7) * (0.6 + rng())
+    if (w > bestW) {
+      bestW = w
+      best = i
+    }
+  }
+  return best >= 0 ? best : firstMid(nodes, team)
+}
+
 // ── Visual motion (per real-time frame) ──────────────────────────────────────
 export function stepMotion(state: PitchState, dt: number, t: number) {
   const { nodes, ball, rng, str } = state
@@ -259,6 +286,44 @@ export function stepMotion(state: PitchState, dt: number, t: number) {
       state.carrier = firstMid(nodes, state.poss)
       state.dwell = 0.7
     }
+  } else if (state.mode === 'corner' && state.corner) {
+    const cor = state.corner
+    cor.t -= dt
+    if (cor.phase === 'in') {
+      // Ball waits at the corner flag while the box fills up.
+      const fx = cor.team === 'home' ? 97 : 3
+      ball.x += (fx - ball.x) * Math.min(1, dt * 6)
+      ball.y += (cor.flagY - ball.y) * Math.min(1, dt * 6)
+      if (cor.t <= 0) {
+        cor.phase = 'delivered'
+        cor.t = 0.55
+        cor.target = pickBoxTarget(state, cor.team)
+        state.carrier = cor.target
+      }
+    } else {
+      // Delivery flies to the target attacker in the box.
+      const tgt = nodes[cor.target]
+      ball.x += (tgt.x - ball.x) * Math.min(1, dt * 7)
+      ball.y += (tgt.y - ball.y) * Math.min(1, dt * 7)
+      if (cor.t <= 0) {
+        const team = cor.team
+        const possStr = team === 'home' ? str.homeStrength : str.awayStrength
+        const oppStr = team === 'home' ? str.awayStrength : str.homeStrength
+        const oppGk = team === 'home' ? str.awayGk : str.homeGk
+        const conv = clamp(0.14 + (possStr - oppStr) * 0.008 - (oppGk - 78) * 0.005, 0.03, 0.42)
+        if (rng() < conv) {
+          // The player who got on the end of it (had the ball) scores.
+          state.newGoals.push({
+            team,
+            scorer: nodes[cor.target].name,
+            minute: Math.max(1, Math.floor(state.gameMin)),
+          })
+          startGoalCelebration(state, team)
+        } else {
+          loseToOpponent(state) // cleared
+        }
+      }
+    }
   } else if (state.mode === 'pass') {
     state.pass.t += dt
     const target = nodes[state.pass.to]
@@ -268,7 +333,7 @@ export function stepMotion(state: PitchState, dt: number, t: number) {
     if (k >= 1) {
       state.mode = 'carry'
       state.carrier = state.pass.to
-      state.dwell = 0.45 + rng() * 0.55
+      state.dwell = 0.4 + rng() * 0.5
     }
   } else {
     state.dwell -= dt
@@ -295,7 +360,9 @@ export function stepMotion(state: PitchState, dt: number, t: number) {
     }
   }
 
-  const attacking = state.mode === 'goal' ? state.goal!.team : state.poss
+  // ── Player movement ────────────────────────────────────────────────────────
+  const attacking = state.mode === 'goal' ? state.goal!.team : state.corner ? state.corner.team : state.poss
+  const cornerActive = state.mode === 'corner' && state.corner
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i]
     if (n.isGK) {
@@ -304,30 +371,45 @@ export function stepMotion(state: PitchState, dt: number, t: number) {
       n.y += (clamp(50 + (ball.y - 50) * 0.32, 8, 92) - n.y) * Math.min(1, dt * 3)
       continue
     }
-    const hasBall = n.team === attacking
-    let shiftX: number
-    if (state.mode === 'goal' && n.team === attacking) shiftX = n.attack * n.push * 30
-    else if (hasBall) shiftX = n.attack * n.push * 20
-    else shiftX = -n.attack * n.drop * 13
 
-    let tx = n.bx + shiftX
-    let ty = n.by + (ball.y - n.by) * 0.2
-    if (i === state.carrier && state.mode === 'carry') {
-      tx += n.attack * 7
-      ty += (ball.y - n.by) * 0.15
+    let tx: number
+    let ty: number
+    if (cornerActive && n.team === attacking && i !== state.corner!.target) {
+      // Crowd the box — DEFENDERS COME UP TOO.
+      const boxX = n.attack === 1 ? 86 : 14
+      tx = boxX + Math.sin(t * 1.6 + n.phase) * 6
+      ty = 31 + ((i % 7) - 3) * 5 + Math.cos(t * 1.5 + n.phase) * 4
+    } else if (cornerActive && n.team !== attacking) {
+      // Defending team protects its goal.
+      const ownX = n.attack === 1 ? 14 : 86
+      tx = ownX + Math.sin(t * n.freq + n.phase) * 5
+      ty = 31 + ((i % 7) - 3) * 5 + Math.cos(t * n.freq + n.phase) * 4
+    } else {
+      const hasBall = n.team === attacking
+      let shiftX: number
+      if (state.mode === 'goal' && n.team === attacking) shiftX = n.attack * n.push * 30
+      else if (hasBall) shiftX = n.attack * n.push * 23
+      else shiftX = -n.attack * n.drop * 12
+
+      tx = n.bx + shiftX
+      ty = n.by + (ball.y - n.by) * 0.22
+      if (i === state.carrier && state.mode === 'carry') {
+        tx += n.attack * 9
+        ty += (ball.y - n.by) * 0.18
+      }
+      if (state.mode === 'pass' && i === state.pass.to) tx += n.attack * 8
+      // Bigger organic roaming so players cover more ground.
+      tx += Math.sin(t * n.freq + n.phase) * 7
+      ty += Math.cos(t * n.freq * 1.1 + n.phase) * 7
     }
-    if (state.mode === 'pass' && i === state.pass.to) tx += n.attack * 6
-    tx += Math.sin(t * n.freq + n.phase) * 5
-    ty += Math.cos(t * n.freq * 1.07 + n.phase) * 5
 
     const ease = Math.min(1, dt * 2.4)
     n.x += (clamp(tx, 2, 98) - n.x) * ease
-    n.y += (clamp(ty, 5, 95) - n.y) * ease
+    n.y += (clamp(ty, 4, 96) - n.y) * ease
   }
 }
 
 // ── Game time + scoring (per game-minute delta) ──────────────────────────────
-// Only the team currently in possession can generate a chance/goal.
 export function advanceGame(state: PitchState, gameDelta: number) {
   if (gameDelta <= 0) return
   state.gameMin = Math.min(state.segEnd, state.gameMin + gameDelta)
@@ -349,23 +431,24 @@ export function advanceGame(state: PitchState, gameDelta: number) {
       if (state.rng() < onTargetP) {
         if (poss === 'home') state.stats.homeOnTarget++
         else state.stats.awayOnTarget++
-        const convP = clamp(
-          0.34 + (possStr - oppStr) * 0.014 - (oppGk - 78) * 0.007,
-          0.05,
-          0.8,
-        )
+        const convP = clamp(0.34 + (possStr - oppStr) * 0.014 - (oppGk - 78) * 0.007, 0.05, 0.8)
         if (state.rng() < convP) {
+          // The scorer is whoever had the ball (the carrier).
           state.newGoals.push({
             team: poss,
-            scorer: pickScorer(state, poss),
+            scorer: state.nodes[state.carrier].name,
             minute: Math.max(1, Math.floor(state.gameMin)),
           })
           startGoalCelebration(state, poss)
+        } else if (state.rng() < CORNER_FROM_MISS) {
+          startCorner(state) // saved → corner
         } else {
-          loseToOpponent(state) // saved
+          loseToOpponent(state)
         }
+      } else if (state.rng() < CORNER_FROM_MISS) {
+        startCorner(state) // blocked/off → corner
       } else {
-        loseToOpponent(state) // off target
+        loseToOpponent(state)
       }
     }
   }
