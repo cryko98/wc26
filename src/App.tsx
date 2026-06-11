@@ -1,3 +1,4 @@
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Header } from './components/Header'
 import { Champion, Eliminated } from './components/EndScreen'
 import { GroupResult } from './components/GroupResult'
@@ -43,14 +44,18 @@ function Footer() {
 
 export default function App() {
   return (
-    <TournamentProvider>
-      <div className="flex min-h-full flex-col grain">
-        <Header />
-        <main className="flex-1">
-          <Screen />
-        </main>
-        <Footer />
-      </div>
-    </TournamentProvider>
+    <ErrorBoundary>
+      <TournamentProvider>
+        <div className="flex min-h-full flex-col grain">
+          <Header />
+          <main className="flex-1">
+            <ErrorBoundary>
+              <Screen />
+            </ErrorBoundary>
+          </main>
+          <Footer />
+        </div>
+      </TournamentProvider>
+    </ErrorBoundary>
   )
 }

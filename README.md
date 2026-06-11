@@ -60,10 +60,11 @@ Netlify, GitHub Pages, or any static host.
 8. **Result** — your group table, whether you advanced (top 2, or one of the 8 best
    third-placed teams), and the **Golden Boot** top-scorers race.
 9. **Knockouts** — Round of 32 → Round of 16 → Quarter-finals → Semi-finals → Final.
-   Level after 90' goes to extra time, then penalties — every knockout produces a
-   winner.
-10. **End** — lift the trophy 🏆 or bow out (with a Golden Boot leaderboard and your
-    full run summary), then **Restart tournament** to go again.
+   Level after 90' goes to extra time, then a **kick-by-kick penalty shootout**
+   (shown ⚽/✗ per kick) — every knockout produces a winner.
+10. **End** — lift the trophy 🏆 or bow out, with full tournament awards: **Golden
+    Boot** (top scorers), **Golden Glove** (clean sheets), tournament totals, and
+    your run summary. Then **Restart tournament** to go again.
 
 Tournament progress lives in in-memory React state and **resets on refresh** (by
 design for v1 — no `localStorage`/`sessionStorage` is used).

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { GROUPS, TEAMS, type SquadTeam } from '../data/teams'
-import { ratingToStars } from '../lib/format'
 import { useTournament } from '../state/TournamentProvider'
 import { Jersey } from './Jersey'
 import { StarRating } from './StarRating'
@@ -149,7 +148,7 @@ export function TeamSelect() {
         used. Player and nation names are factual data only.
         <br />
         <span className="font-mono text-slate-500">
-          Star ratings reflect squad strength ({ratingToStars(90)}★ = world-class).
+          Groups reflect the official 2026 draw · star ratings reflect squad strength.
         </span>
       </p>
     </div>

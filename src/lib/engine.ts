@@ -208,3 +208,47 @@ export function topScorers(results: MatchResult[], limit = 10): ScorerTally[] {
     .sort((a, b) => b.goals - a.goals || a.name.localeCompare(b.name))
     .slice(0, limit)
 }
+
+// ── Golden Glove (clean sheets, credited to each team's first-choice GK) ─────
+
+export interface GloveTally {
+  name: string
+  teamId: string
+  cleanSheets: number
+}
+
+export function goldenGlove(results: MatchResult[], limit = 5): GloveTally[] {
+  const tally = new Map<string, GloveTally>()
+  const credit = (teamId: string) => {
+    const team = getTeam(teamId)
+    if (!team) return
+    const gk = team.players
+      .filter((p) => p.position === 'GK')
+      .sort((a, b) => b.rating - a.rating)[0]
+    if (!gk) return
+    const existing = tally.get(teamId)
+    if (existing) existing.cleanSheets++
+    else tally.set(teamId, { name: gk.name, teamId, cleanSheets: 1 })
+  }
+  for (const r of results) {
+    if (r.awayScore === 0) credit(r.home)
+    if (r.homeScore === 0) credit(r.away)
+  }
+  return [...tally.values()]
+    .sort((a, b) => b.cleanSheets - a.cleanSheets || a.name.localeCompare(b.name))
+    .slice(0, limit)
+}
+
+// ── Tournament-wide totals for the awards screen ─────────────────────────────
+
+export interface TournamentTotals {
+  matches: number
+  goals: number
+  avgGoals: number
+}
+
+export function tournamentTotals(results: MatchResult[]): TournamentTotals {
+  const matches = results.length
+  const goals = results.reduce((s, r) => s + r.homeScore + r.awayScore, 0)
+  return { matches, goals, avgGoals: matches ? goals / matches : 0 }
+}

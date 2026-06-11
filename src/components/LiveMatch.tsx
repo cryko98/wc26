@@ -5,7 +5,7 @@ import type { LiveStats, PitchStrength } from '../lib/pitchSim'
 import { aiSide, nextMatchId, penaltyShootout, pickPotm, type SimSide, userSide } from '../lib/sim'
 import { venueFor } from '../lib/venues'
 import { useTournament } from '../state/TournamentProvider'
-import type { FormationName, MatchEvent, MatchResult, MatchStats } from '../types'
+import type { FormationName, MatchEvent, MatchResult, MatchStats, PenaltyKick } from '../types'
 import { HalftimePanel } from './HalftimePanel'
 import { Jersey } from './Jersey'
 import { MatchStatsView } from './MatchStatsView'
@@ -70,7 +70,9 @@ export function LiveMatch({
   const [clock, setClock] = useState(0)
   const [events, setEvents] = useState<MatchEvent[]>([])
   const [live, setLive] = useState<LiveStats | null>(null)
-  const [penalties, setPenalties] = useState<{ home: number; away: number } | undefined>()
+  const [penalties, setPenalties] = useState<
+    { home: number; away: number; kicks?: PenaltyKick[] } | undefined
+  >()
   const [speed, setSpeed] = useState<SpeedName>('Normal')
   const [skipKey, setSkipKey] = useState(0)
   const [sides, setSides] = useState<{ home: SimSide; away: SimSide } | null>(null)
@@ -104,6 +106,10 @@ export function LiveMatch({
 
   function handleGoal(g: { team: 'home' | 'away'; scorer: string; minute: number }) {
     const teamId = g.team === 'home' ? homeId : awayId
+    // Bump the score refs synchronously: a goal and the segment end can land in
+    // the same animation frame, and handleSegmentEnd must not read a stale score.
+    if (g.team === 'home') homeScoreRef.current++
+    else awayScoreRef.current++
     setEvents((ev) => [...ev, { minute: g.minute, team: teamId, scorer: g.scorer, kind: 'goal' }])
   }
 
@@ -317,6 +323,41 @@ export function LiveMatch({
                 </span>
               ))}
             </div>
+
+            {/* Penalty shootout sequence */}
+            {isFinished && penalties?.kicks && (
+              <div className="mt-3 rounded-xl border border-flare/25 bg-flare/5 p-3 animate-fade-up">
+                <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-[0.15em] text-flare-400">
+                  Penalty shootout · {penalties.home}–{penalties.away}
+                </p>
+                {(['home', 'away'] as const).map((side) => {
+                  const t = side === 'home' ? home : away
+                  return (
+                    <div key={side} className="flex items-center gap-2 py-1">
+                      <span className="w-7 shrink-0 text-center text-base">{t.flag}</span>
+                      <div className="flex flex-1 flex-wrap items-center gap-1">
+                        {penalties.kicks!
+                          .filter((k) => k.team === side)
+                          .map((k, i) => (
+                            <span
+                              key={i}
+                              className={`grid h-5 w-5 place-items-center rounded-full text-[10px] font-bold ${
+                                k.scored ? 'bg-pitch text-ink-950' : 'bg-ink-700 text-flare-400'
+                              }`}
+                              title={k.scored ? 'Scored' : 'Missed'}
+                            >
+                              {k.scored ? '⚽' : '✗'}
+                            </span>
+                          ))}
+                      </div>
+                      <span className="w-5 shrink-0 text-right font-mono text-sm font-bold text-white">
+                        {side === 'home' ? penalties.home : penalties.away}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             {/* Full-time stats + POTM */}
             {isFinished && result?.stats && (

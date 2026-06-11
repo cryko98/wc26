@@ -38,6 +38,11 @@ export interface MatchStats {
   awayCorners: number
 }
 
+export interface PenaltyKick {
+  team: 'home' | 'away'
+  scored: boolean
+}
+
 export interface MatchResult {
   id: string
   home: string // team id
@@ -46,7 +51,7 @@ export interface MatchResult {
   awayScore: number
   stage: string // 'Group A' | 'Round of 32' | 'Final' | ...
   extraTime?: boolean
-  penalties?: { home: number; away: number }
+  penalties?: { home: number; away: number; kicks?: PenaltyKick[] }
   events: MatchEvent[]
   stats?: MatchStats
   potm?: { name: string; teamId: string } // player of the match

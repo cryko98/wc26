@@ -175,29 +175,40 @@ function shootoutConversion(shooterTeam: SimSide, keeperTeam: SimSide): number {
   return Math.max(0.55, Math.min(p, 0.92))
 }
 
-function penaltyShootout(home: SimSide, away: SimSide): { home: number; away: number } {
+function penaltyShootout(
+  home: SimSide,
+  away: SimSide,
+): { home: number; away: number; kicks: { team: 'home' | 'away'; scored: boolean }[] } {
   const pHome = shootoutConversion(home, away)
   const pAway = shootoutConversion(away, home)
+  const kicks: { team: 'home' | 'away'; scored: boolean }[] = []
   let h = 0
   let a = 0
 
-  // Best of 5
+  const kick = (team: 'home' | 'away') => {
+    const scored = Math.random() < (team === 'home' ? pHome : pAway)
+    kicks.push({ team, scored })
+    if (scored) team === 'home' ? h++ : a++
+  }
+
+  // Best of 5, alternating kicks (we play all 5 rounds for simplicity;
+  // sudden death below breaks genuine ties).
   for (let i = 0; i < 5; i++) {
-    if (Math.random() < pHome) h++
-    if (Math.random() < pAway) a++
-    // (We tally all 5 for simplicity; sudden death below breaks genuine ties.)
+    kick('home')
+    kick('away')
   }
   // Sudden death
   let guard = 0
   while (h === a && guard < 50) {
-    const hs = Math.random() < pHome
-    const as = Math.random() < pAway
-    if (hs) h++
-    if (as) a++
+    kick('home')
+    kick('away')
     guard++
   }
-  if (h === a) h++ // absolute fallback — shootouts must produce a winner
-  return { home: h, away: a }
+  if (h === a) {
+    h++ // absolute fallback — shootouts must produce a winner
+    kicks.push({ team: 'home', scored: true })
+  }
+  return { home: h, away: a, kicks }
 }
 
 // ── Segment simulation (for live, half-by-half matches) ──────────────────────

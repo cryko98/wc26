@@ -30,6 +30,14 @@ function team(
   ranking: number,
   players: P[],
 ): SquadTeam {
+  // Shirt numbers must be unique within a squad. If a tuple repeats a number,
+  // the later player is silently moved to the lowest free number (1–99), so
+  // hand-edited data can never produce two identical shirts on the pitch.
+  const used = new Set<number>()
+  const nextFree = () => {
+    for (let n = 1; n <= 99; n++) if (!used.has(n)) return n
+    return 99
+  }
   return {
     id,
     name,
@@ -37,13 +45,17 @@ function team(
     colors,
     group,
     ranking,
-    players: players.map(([pname, number, position, rating], i) => ({
-      id: `${id}-${i}`,
-      name: pname,
-      number,
-      position,
-      rating,
-    })),
+    players: players.map(([pname, number, position, rating], i) => {
+      const shirt = used.has(number) ? nextFree() : number
+      used.add(shirt)
+      return {
+        id: `${id}-${i}`,
+        name: pname,
+        number: shirt,
+        position,
+        rating,
+      }
+    }),
   }
 }
 
@@ -83,7 +95,7 @@ const A: SquadTeam[] = [
     ['Park Yong-woo', 15, 'MID', 74], ['Paik Seung-ho', 8, 'MID', 75], ['Won Du-jae', 16, 'MID', 74],
     ['Hong Hyun-seok', 13, 'MID', 74], ['Jung Woo-yeong', 26, 'MID', 73],
     ['Son Heung-min', 7, 'FWD', 85], ['Hwang Hee-chan', 11, 'FWD', 80], ['Cho Gue-sung', 9, 'FWD', 76],
-    ['Oh Hyeon-gyu', 24, 'FWD', 74], ['Hwang Ui-jo', 10, 'FWD', 74], ['Lee Dong-gyeong', 3, 'MID', 74],
+    ['Oh Hyeon-gyu', 24, 'FWD', 74], ['Bae Jun-ho', 10, 'FWD', 75], ['Lee Dong-gyeong', 3, 'MID', 74],
     ['Joo Min-kyu', 25, 'FWD', 73],
   ]),
   team('cze', 'Czech Republic', '🇨🇿', ['#d7141a', '#11457e'], 'A', 32, [
@@ -114,7 +126,7 @@ const B: SquadTeam[] = [
     ['Niko Sigur', 17, 'MID', 72],
     ['Jonathan David', 20, 'FWD', 83], ['Cyle Larin', 9, 'FWD', 77], ['Liam Millar', 18, 'FWD', 73],
     ['Jacob Shaffelburg', 24, 'FWD', 74], ['Promise David', 23, 'FWD', 74], ['Ali Ahmed', 25, 'MID', 72],
-    ['Jacob Shaffelburg', 26, 'FWD', 72], ['Theo Corbeanu', 10, 'FWD', 72],
+    ['Tani Oluwaseyi', 26, 'FWD', 74], ['Theo Corbeanu', 10, 'FWD', 72],
   ]),
   team('bih', 'Bosnia and Herzegovina', '🇧🇦', ['#002395', '#ffec00'], 'B', 40, [
     ['Nikola Vasilj', 1, 'GK', 75], ['Ibrahim Šehić', 12, 'GK', 71], ['Vedad Muftić', 23, 'GK', 69],
@@ -191,7 +203,7 @@ const C: SquadTeam[] = [
     ['Fabrice Picault', 22, 'MID', 71],
     ['Frantzdy Pierrot', 9, 'FWD', 73], ['Duckens Nazon', 11, 'FWD', 71], ['Don Deedson Louicius', 19, 'FWD', 70],
     ['Ruben Providence', 10, 'FWD', 71], ['Jean-Kévin Augustin', 12, 'FWD', 71], ['Dany Jean', 24, 'FWD', 69],
-    ['Louicius Don Deedson', 25, 'FWD', 68], ['Roberto Felix', 26, 'MID', 68],
+    ['Mondy Prunier', 25, 'FWD', 69], ['Roberto Felix', 26, 'MID', 68],
   ]),
   team('sco', 'Scotland', '🏴', ['#0065bf', '#ffffff'], 'C', 34, [
     ['Angus Gunn', 1, 'GK', 75], ['Craig Gordon', 12, 'GK', 73], ['Cieran Slicker', 23, 'GK', 70],
@@ -227,7 +239,7 @@ const D: SquadTeam[] = [
     ['Roberto Fernández', 1, 'GK', 73], ['Carlos Coronel', 23, 'GK', 73], ['Gaspar Servio', 12, 'GK', 71],
     ['Gustavo Gómez', 2, 'DEF', 78], ['Fabián Balbuena', 5, 'DEF', 74], ['Omar Alderete', 3, 'DEF', 76],
     ['Junior Alonso', 6, 'DEF', 74], ['Agustín Sández', 13, 'DEF', 73], ['Juan Cáceres', 15, 'DEF', 72],
-    ['Damián Bobadilla', 16, 'DEF', 73], ['Gustavo Velázquez', 4, 'DEF', 72],
+    ['Blas Riveros', 16, 'DEF', 72], ['Gustavo Velázquez', 4, 'DEF', 72],
     ['Andrés Cubas', 14, 'MID', 75], ['Mathías Villasanti', 8, 'MID', 74], ['Diego Gómez', 11, 'MID', 76],
     ['Richard Sánchez', 17, 'MID', 73], ['Damián Bobadilla', 18, 'MID', 73], ['Ramón Sosa', 7, 'MID', 75],
     ['Matías Galarza', 20, 'MID', 72],
@@ -240,7 +252,7 @@ const D: SquadTeam[] = [
     ['Harry Souttar', 19, 'DEF', 77], ['Kye Rowles', 4, 'DEF', 74], ['Cameron Burgess', 5, 'DEF', 73],
     ['Aziz Behich', 16, 'DEF', 74], ['Lewis Miller', 2, 'DEF', 72], ['Jordan Bos', 3, 'DEF', 74],
     ['Alessandro Circati', 15, 'DEF', 74], ['Gianni Stensness', 6, 'DEF', 72],
-    ['Aaron Mooy', 13, 'MID', 76], ['Jackson Irvine', 22, 'MID', 76], ['Connor Metcalfe', 8, 'MID', 73],
+    ['Patrick Yazbek', 13, 'MID', 73], ['Jackson Irvine', 22, 'MID', 76], ['Connor Metcalfe', 8, 'MID', 73],
     ['Riley McGree', 17, 'MID', 74], ['Keanu Baccus', 14, 'MID', 72], ['Aiden O’Neill', 20, 'MID', 73],
     ['Ajdin Hrustic', 10, 'MID', 73],
     ['Mathew Leckie', 7, 'FWD', 75], ['Mitchell Duke', 15, 'FWD', 73], ['Kusini Yengi', 9, 'FWD', 73],
@@ -274,7 +286,7 @@ const E: SquadTeam[] = [
     ['Pascal Groß', 13, 'MID', 78], ['Aleksandar Pavlović', 20, 'MID', 79], ['Angelo Stiller', 8, 'MID', 78],
     ['Leon Goretzka', 21, 'MID', 81],
     ['Kai Havertz', 7, 'FWD', 84], ['Niclas Füllkrug', 9, 'FWD', 80], ['Leroy Sané', 19, 'FWD', 83],
-    ['Serge Gnabry', 11, 'FWD', 82], ['Florian Wirtz', 14, 'MID', 86], ['Karim Adeyemi', 24, 'FWD', 79],
+    ['Serge Gnabry', 11, 'FWD', 82], ['Nick Woltemade', 14, 'FWD', 78], ['Karim Adeyemi', 24, 'FWD', 79],
     ['Deniz Undav', 25, 'FWD', 78], ['Jamie Gittens', 26, 'FWD', 77],
   ]),
   team('cuw', 'Curaçao', '🇨🇼', ['#002b7f', '#f9d90f'], 'E', 47, [
@@ -305,7 +317,7 @@ const E: SquadTeam[] = [
     ['Hernán Galíndez', 1, 'GK', 74], ['Alexander Domínguez', 22, 'GK', 72], ['Gonzalo Valle', 23, 'GK', 71],
     ['Piero Hincapié', 3, 'DEF', 81], ['Willian Pacho', 5, 'DEF', 81], ['Félix Torres', 2, 'DEF', 76],
     ['Pervis Estupiñán', 7, 'DEF', 80], ['Joel Ordóñez', 4, 'DEF', 76], ['Ángelo Preciado', 17, 'DEF', 76],
-    ['William Pacho', 15, 'DEF', 80], ['Xavier Arreaga', 13, 'DEF', 73],
+    ['Jackson Porozo', 15, 'DEF', 73], ['Xavier Arreaga', 13, 'DEF', 73],
     ['Moisés Caicedo', 23, 'MID', 84], ['Alan Franco', 13, 'MID', 75], ['Jhegson Méndez', 6, 'MID', 74],
     ['Kendry Páez', 19, 'MID', 76], ['Carlos Gruezo', 20, 'MID', 74], ['Patrik Mercado', 14, 'MID', 73],
     ['Jeremy Sarmiento', 11, 'MID', 74],
@@ -365,7 +377,7 @@ const F: SquadTeam[] = [
     ['Anis Ben Slimane', 20, 'MID', 73],
     ['Naïm Sliti', 10, 'FWD', 75], ['Youssef Msakni', 18, 'FWD', 74], ['Wahbi Khazri', 9, 'FWD', 74],
     ['Seifeddine Jaziri', 19, 'FWD', 73], ['Hazem Mastouri', 24, 'FWD', 72], ['Elias Saad', 25, 'FWD', 74],
-    ['Firas Chaouat', 26, 'FWD', 72], ['Naïm Sliti', 22, 'FWD', 73],
+    ['Firas Chaouat', 26, 'FWD', 72], ['Sayfallah Ltaief', 22, 'FWD', 73],
   ]),
 ]
 
@@ -383,7 +395,7 @@ const G: SquadTeam[] = [
     ['Arthur Vermeeren', 24, 'MID', 76],
     ['Jérémy Doku', 22, 'FWD', 82], ['Romelu Lukaku', 9, 'FWD', 84], ['Leandro Trossard', 11, 'FWD', 81],
     ['Dodi Lukebakio', 19, 'FWD', 78], ['Johan Bakayoko', 10, 'FWD', 78], ['Loïs Openda', 25, 'FWD', 81],
-    ['Charles De Ketelaere', 13, 'FWD', 80], ['Maxim De Cuyper', 26, 'DEF', 75],
+    ['Malick Fofana', 13, 'FWD', 78], ['Thomas Meunier', 26, 'DEF', 75],
   ]),
   team('egy', 'Egypt', '🇪🇬', ['#ce1126', '#ffffff'], 'G', 25, [
     ['Mohamed El Shenawy', 1, 'GK', 75], ['Mohamed Abou Gabal', 23, 'GK', 72], ['Mohamed Sobhi', 16, 'GK', 71],
@@ -449,7 +461,7 @@ const H: SquadTeam[] = [
     ['Gilson Benchimol', 21, 'MID', 72],
     ['Garry Rodrigues', 11, 'FWD', 74], ['Ryan Mendes', 9, 'FWD', 73], ['Willy Semedo', 17, 'FWD', 72],
     ['Bebé', 19, 'FWD', 73], ['Dailon Rocha Livramento', 24, 'FWD', 72], ['Júlio Tavares', 25, 'FWD', 71],
-    ['Stopira', 26, 'DEF', 71], ['Yannick Semedo', 22, 'FWD', 71],
+    ['Patrick Andrade', 26, 'MID', 72], ['Yannick Semedo', 22, 'FWD', 71],
   ]),
   team('ksa', 'Saudi Arabia', '🇸🇦', ['#006c35', '#ffffff'], 'H', 39, [
     ['Mohammed Al-Owais', 21, 'GK', 73], ['Nawaf Al-Aqidi', 1, 'GK', 70], ['Ahmed Al-Kassar', 22, 'GK', 70],
@@ -503,7 +515,7 @@ const I: SquadTeam[] = [
     ['Habib Diarra', 14, 'MID', 76],
     ['Sadio Mané', 10, 'FWD', 84], ['Nicolas Jackson', 9, 'FWD', 80], ['Ismaïla Sarr', 18, 'FWD', 79],
     ['Boulaye Dia', 19, 'FWD', 77], ['Habib Diallo', 7, 'FWD', 75], ['Iliman Ndiaye', 8, 'FWD', 79],
-    ['Chérif Ndiaye', 24, 'FWD', 73], ['Cherif Ndiaye', 25, 'FWD', 73],
+    ['Chérif Ndiaye', 24, 'FWD', 73], ['Assane Diao', 25, 'FWD', 76],
   ]),
   team('irq', 'Iraq', '🇮🇶', ['#ffffff', '#ce1126'], 'I', 41, [
     ['Jalal Hassan', 1, 'GK', 72], ['Ahmad Basil', 22, 'GK', 69], ['Fahad Talib', 12, 'GK', 70],
@@ -544,7 +556,7 @@ const J: SquadTeam[] = [
     ['Leandro Paredes', 5, 'MID', 79], ['Giovani Lo Celso', 21, 'MID', 80], ['Exequiel Palacios', 14, 'MID', 80],
     ['Thiago Almada', 16, 'MID', 80],
     ['Lionel Messi', 10, 'FWD', 90], ['Julián Álvarez', 9, 'FWD', 87], ['Lautaro Martínez', 22, 'FWD', 87],
-    ['Ángel Di María', 11, 'FWD', 82], ['Nico González', 15, 'FWD', 80], ['Giuliano Simeone', 17, 'FWD', 78],
+    ['Franco Mastantuono', 11, 'FWD', 79], ['Nico González', 15, 'FWD', 80], ['Giuliano Simeone', 17, 'FWD', 78],
     ['Alejandro Garnacho', 18, 'FWD', 81], ['Valentín Carboni', 6, 'MID', 77],
   ]),
   team('alg', 'Algeria', '🇩🇿', ['#006233', '#ffffff'], 'J', 29, [
@@ -567,17 +579,17 @@ const J: SquadTeam[] = [
     ['Konrad Laimer', 6, 'MID', 80], ['Nicolas Seiwald', 13, 'MID', 78], ['Christoph Baumgartner', 19, 'MID', 80],
     ['Marcel Sabitzer', 9, 'MID', 81], ['Florian Grillitsch', 7, 'MID', 76], ['Romano Schmid', 22, 'MID', 74],
     ['Patrick Wimmer', 20, 'MID', 75],
-    ['Marko Arnautović', 17, 'FWD', 77], ['Michael Gregoritsch', 14, 'FWD', 76], ['Marcel Sabitzer', 10, 'MID', 80],
-    ['Maximilian Entrup', 24, 'FWD', 73], ['Junior Adamu', 25, 'FWD', 74], ['Patrick Wimmer', 26, 'MID', 75],
-    ['Andreas Weimann', 11, 'FWD', 73], ['Konrad Laimer', 12, 'MID', 80],
+    ['Marko Arnautović', 17, 'FWD', 77], ['Michael Gregoritsch', 14, 'FWD', 76], ['Alexander Prass', 10, 'MID', 75],
+    ['Maximilian Entrup', 24, 'FWD', 73], ['Junior Adamu', 25, 'FWD', 74], ['Marco Grüll', 26, 'FWD', 74],
+    ['Andreas Weimann', 11, 'FWD', 73], ['Xaver Schlager', 12, 'MID', 79],
   ]),
   team('jor', 'Jordan', '🇯🇴', ['#ce1126', '#ffffff'], 'J', 42, [
     ['Yazeed Abulaila', 1, 'GK', 72], ['Abdullah Al-Fakhouri', 22, 'GK', 69], ['Yazid Abulaila', 23, 'GK', 68],
     ['Yazan Al-Arab', 5, 'DEF', 72], ['Salem Al-Ajalin', 4, 'DEF', 71], ['Abdallah Nasib', 3, 'DEF', 71],
-    ['Ihsan Haddad', 2, 'DEF', 71], ['Bara Marei', 6, 'DEF', 70], ['Ali Olwan', 15, 'DEF', 71],
+    ['Ihsan Haddad', 2, 'DEF', 71], ['Bara Marei', 6, 'DEF', 70], ['Mohannad Abu Taha', 15, 'DEF', 71],
     ['Mahmoud Al-Mardi', 16, 'DEF', 71], ['Salem Al-Rashdan', 13, 'DEF', 70],
     ['Noor Al-Rawabdeh', 8, 'MID', 73], ['Nizar Al-Rashdan', 17, 'MID', 73], ['Ehsan Haddad', 14, 'MID', 71],
-    ['Rajaei Ayed', 7, 'MID', 71], ['Mohammad Abu Zraiq', 18, 'MID', 71], ['Yazan Al-Naimat', 20, 'MID', 73],
+    ['Rajaei Ayed', 7, 'MID', 71], ['Mohammad Abu Zraiq', 18, 'MID', 71], ['Odai Al-Saify', 20, 'MID', 71],
     ['Abdallah Al-Naqbi', 21, 'MID', 70],
     ['Mousa Al-Taamari', 10, 'FWD', 79], ['Yazan Al-Naimat', 9, 'FWD', 74], ['Ali Olwan', 11, 'FWD', 73],
     ['Mahmoud Al-Aradi', 24, 'FWD', 71], ['Anas Al-Awadat', 25, 'FWD', 71], ['Mohammad Al-Dmeiri', 26, 'FWD', 71],
@@ -591,9 +603,9 @@ const J: SquadTeam[] = [
 const K: SquadTeam[] = [
   team('por', 'Portugal', '🇵🇹', ['#006600', '#ff0000'], 'K', 6, [
     ['Diogo Costa', 22, 'GK', 84], ['Rui Patrício', 1, 'GK', 78], ['José Sá', 12, 'GK', 79],
-    ['Rúben Dias', 3, 'DEF', 86], ['Pepe', 13, 'DEF', 79], ['João Cancelo', 20, 'DEF', 84],
+    ['Rúben Dias', 3, 'DEF', 86], ['Tomás Araújo', 13, 'DEF', 77], ['João Cancelo', 20, 'DEF', 84],
     ['Nuno Mendes', 19, 'DEF', 83], ['Gonçalo Inácio', 4, 'DEF', 80], ['Diogo Dalot', 2, 'DEF', 82],
-    ['António Silva', 5, 'DEF', 79], ['Rúben Dias', 14, 'DEF', 86],
+    ['António Silva', 5, 'DEF', 79], ['Renato Veiga', 14, 'DEF', 78],
     ['Bruno Fernandes', 8, 'MID', 87], ['Vitinha', 16, 'MID', 84], ['Rúben Neves', 18, 'MID', 81],
     ['Bernardo Silva', 10, 'MID', 87], ['João Neves', 23, 'MID', 82], ['João Palhinha', 6, 'MID', 82],
     ['Otávio', 25, 'MID', 78],
@@ -616,13 +628,13 @@ const K: SquadTeam[] = [
   team('uzb', 'Uzbekistan', '🇺🇿', ['#1eb53a', '#0099b5'], 'K', 38, [
     ['Utkir Yusupov', 1, 'GK', 71], ['Abduvohid Nematov', 12, 'GK', 69], ['Vladimir Nazarov', 23, 'GK', 69],
     ['Abdukodir Khusanov', 4, 'DEF', 77], ['Rustamjon Ashurmatov', 3, 'DEF', 72], ['Sherzod Nasrullaev', 2, 'DEF', 71],
-    ['Farrukh Sayfiev', 5, 'DEF', 71], ['Abbosbek Fayzullaev', 10, 'DEF', 76], ['Bobur Abdikholikov', 15, 'DEF', 73],
+    ['Farrukh Sayfiev', 5, 'DEF', 71], ['Khusniddin Alikulov', 10, 'DEF', 72], ['Bobur Abdikholikov', 15, 'DEF', 73],
     ['Umarali Rahmonaliev', 16, 'DEF', 71], ['Akramjon Komilov', 13, 'DEF', 71],
     ['Jaloliddin Masharipov', 7, 'MID', 74], ['Otabek Shukurov', 6, 'MID', 72], ['Azizbek Turgunboev', 11, 'MID', 71],
     ['Khojimat Erkinov', 14, 'MID', 71], ['Jasurbek Jaloliddinov', 20, 'MID', 71], ['Odiljon Hamrobekov', 8, 'MID', 72],
     ['Abdurauf Buriev', 21, 'MID', 71],
     ['Eldor Shomurodov', 9, 'FWD', 77], ['Igor Sergeev', 17, 'FWD', 72], ['Oston Urunov', 18, 'FWD', 71],
-    ['Khojiakbar Alijonov', 24, 'FWD', 71], ['Jaloliddin Masharipov', 22, 'MID', 73], ['Abbosbek Fayzullaev', 25, 'MID', 76],
+    ['Khojiakbar Alijonov', 24, 'FWD', 71], ['Jamshid Iskanderov', 22, 'MID', 71], ['Abbosbek Fayzullaev', 25, 'MID', 76],
     ['Sardor Mukhamedov', 26, 'DEF', 71], ['Dostonbek Khamdamov', 19, 'FWD', 73],
   ]),
   team('col', 'Colombia', '🇨🇴', ['#fcd116', '#003893'], 'K', 13, [
@@ -659,7 +671,7 @@ const L: SquadTeam[] = [
     ['Dominik Livaković', 1, 'GK', 80], ['Ivica Ivušić', 23, 'GK', 74], ['Nediljko Labrović', 12, 'GK', 73],
     ['Joško Gvardiol', 20, 'DEF', 85], ['Josip Stanišić', 2, 'DEF', 78], ['Borna Sosa', 19, 'DEF', 77],
     ['Josip Šutalo', 6, 'DEF', 77], ['Marin Pongračić', 5, 'DEF', 76], ['Domagoj Vida', 21, 'DEF', 74],
-    ['Martin Erlić', 3, 'DEF', 75], ['Josko Gvardiol', 4, 'DEF', 85],
+    ['Martin Erlić', 3, 'DEF', 75], ['Duje Ćaleta-Car', 4, 'DEF', 74],
     ['Luka Modrić', 10, 'MID', 84], ['Mateo Kovačić', 8, 'MID', 83], ['Marcelo Brozović', 11, 'MID', 82],
     ['Lovro Majer', 7, 'MID', 79], ['Mario Pašalić', 15, 'MID', 78], ['Luka Sučić', 25, 'MID', 76],
     ['Nikola Vlašić', 13, 'MID', 78], ['Petar Sučić', 14, 'MID', 76],
@@ -685,10 +697,10 @@ const L: SquadTeam[] = [
     ['Michael Murillo', 13, 'DEF', 74], ['Roderick Miller', 4, 'DEF', 72], ['César Blackman', 2, 'DEF', 72],
     ['Carlos Harvey', 6, 'DEF', 72], ['Jorge Gutiérrez', 3, 'DEF', 71],
     ['Aníbal Godoy', 20, 'MID', 73], ['Cristian Martínez', 19, 'MID', 72], ['Adalberto Carrasquilla', 6, 'MID', 74],
-    ['Édgar Bárcenas', 7, 'MID', 73], ['Tomás Rodríguez', 14, 'MID', 71], ['Cristian Martínez', 8, 'MID', 72],
+    ['Édgar Bárcenas', 7, 'MID', 73], ['Tomás Rodríguez', 14, 'MID', 71], ['Abdiel Ayarza', 8, 'MID', 72],
     ['Ernesto Walker', 21, 'MID', 71],
     ['Ismael Díaz', 10, 'FWD', 73], ['José Fajardo', 9, 'FWD', 72], ['Cecilio Waterman', 11, 'FWD', 72],
-    ['Azarías Londoño', 18, 'FWD', 71], ['Eduardo Guerrero', 24, 'FWD', 71], ['Tani Oluwaseyi', 25, 'FWD', 73],
+    ['Azarías Londoño', 18, 'FWD', 71], ['Eduardo Guerrero', 24, 'FWD', 71], ['Edward Cedeño', 25, 'MID', 72],
     ['José Córdoba', 26, 'DEF', 73], ['Yoel Bárcenas', 12, 'MID', 73],
   ]),
 ]

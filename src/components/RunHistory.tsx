@@ -40,10 +40,12 @@ export function RunHistory({ matches, userTeamId }: { matches: MatchResult[]; us
               <span className="font-mono text-sm font-bold text-white">
                 {us}<span className="mx-0.5 text-slate-600">–</span>{them}
               </span>
-              {m.penalties && (
+              {m.penalties ? (
                 <span className="font-mono text-[10px] text-flare-400">
                   ({m.penalties.home}-{m.penalties.away}p)
                 </span>
+              ) : (
+                m.extraTime && <span className="font-mono text-[10px] text-slate-500">aet</span>
               )}
             </li>
           )

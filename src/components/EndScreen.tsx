@@ -1,19 +1,25 @@
 import { useMemo } from 'react'
-import { topScorers } from '../lib/engine'
+import { goldenGlove, topScorers, tournamentTotals } from '../lib/engine'
 import { useTournament } from '../state/TournamentProvider'
+import { GoldenGlove, TournamentStats } from './Awards'
 import { BracketView } from './Bracket'
 import { GoldenBoot } from './GoldenBoot'
 import { Jersey } from './Jersey'
 import { RunHistory } from './RunHistory'
 import type { MatchResult } from '../types'
 
-function useTournamentScorers(): ReturnType<typeof topScorers> {
+function useTournamentAwards() {
   const { state } = useTournament()
   return useMemo(() => {
     const bracketResults = state.bracket
       .map((s) => s.result)
       .filter(Boolean) as MatchResult[]
-    return topScorers([...state.groupResults, ...bracketResults], 10)
+    const all = [...state.groupResults, ...bracketResults]
+    return {
+      scorers: topScorers(all, 10),
+      keepers: goldenGlove(all, 5),
+      totals: tournamentTotals(all),
+    }
   }, [state.groupResults, state.bracket])
 }
 
@@ -52,7 +58,7 @@ function Confetti({ colors }: { colors: string[] }) {
 export function Champion() {
   const { state, userTeam, restart } = useTournament()
   const team = userTeam!
-  const scorers = useTournamentScorers()
+  const { scorers, keepers, totals } = useTournamentAwards()
 
   return (
     <div className="relative mx-auto max-w-5xl px-4 py-10">
@@ -88,8 +94,10 @@ export function Champion() {
             <BracketView bracket={state.bracket} userTeamId={team.id} />
           </div>
           <div className="flex flex-col gap-6">
+            <TournamentStats totals={totals} />
             <RunHistory matches={state.userHistory} userTeamId={team.id} />
             <GoldenBoot scorers={scorers} userTeamId={team.id} />
+            <GoldenGlove keepers={keepers} userTeamId={team.id} />
           </div>
         </div>
       </div>
@@ -101,7 +109,7 @@ export function Eliminated() {
   const { state, userTeam, restart } = useTournament()
   const team = userTeam!
   const round = state.eliminatedRound ?? 'the knockouts'
-  const scorers = useTournamentScorers()
+  const { scorers, keepers, totals } = useTournamentAwards()
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -131,8 +139,10 @@ export function Eliminated() {
           <BracketView bracket={state.bracket} userTeamId={team.id} />
         </div>
         <div className="flex flex-col gap-6">
+          <TournamentStats totals={totals} />
           <RunHistory matches={state.userHistory} userTeamId={team.id} />
           <GoldenBoot scorers={scorers} userTeamId={team.id} />
+          <GoldenGlove keepers={keepers} userTeamId={team.id} />
         </div>
       </div>
     </div>
